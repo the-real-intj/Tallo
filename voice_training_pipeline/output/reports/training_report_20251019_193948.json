@@ -1,0 +1,36 @@
+{
+  "tongtong": {
+    "character_id": "tongtong",
+    "character_name": "통통이",
+    "start_time": "2025-10-19T19:14:06.822739",
+    "status": "failed",
+    "steps": {
+      "download": {
+        "status": "success",
+        "files_count": 2,
+        "files": [
+          "data\\raw\\tongtong_20251019_191406.wav",
+          "data\\raw\\tongtong_20251019_191501.wav"
+        ]
+      },
+      "vocal_separation": {
+        "status": "success",
+        "files_count": 0,
+        "files": []
+      },
+      "preprocessing": {
+        "status": "success",
+        "segments_count": 0,
+        "files": []
+      },
+      "quality_filter": {
+        "status": "success",
+        "original_count": 0,
+        "filtered_count": 0,
+        "files": []
+      }
+    },
+    "error": "Command '['pip', 'install', '-r', 'GPT-SoVITS\\\\requirements.txt']' returned non-zero exit status 1.",
+    "end_time": "2025-10-19T19:39:48.151995"
+  }
+}

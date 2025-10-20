@@ -1,0 +1,70 @@
+# ========== 핵심 음성 처리 라이브러리 ==========
+# 유튜브 다운로드
+yt-dlp>=2024.1.0
+pytube>=15.0.0
+
+# 오디오 처리
+pydub>=0.25.1
+librosa>=0.10.1
+soundfile>=0.12.1
+scipy>=1.11.0
+numpy>=1.24.0
+
+# 음성 분리 (보컬 추출)
+spleeter>=2.4.0
+demucs>=4.0.0
+
+# 노이즈 감소
+noisereduce>=3.0.0
+pydub-noise-reduction>=0.1.0
+
+# ========== 음성 모델 관련 ==========
+# Whisper (STT - 음성 인식)
+openai-whisper>=20231117
+faster-whisper>=0.10.0
+
+# TTS 기본 라이브러리
+TTS>=0.22.0
+pyttsx3>=2.90
+
+# ========== 딥러닝 프레임워크 ==========
+torch>=2.1.0
+torchaudio>=2.1.0
+torchvision>=0.16.0
+
+# ========== API 클라이언트 ==========
+openai>=1.10.0
+google-generativeai>=0.8.0  # Gemini 2.0 Flash-Lite 지원
+groq>=0.4.0
+
+# ========== 데이터 처리 ==========
+pandas>=2.1.0
+matplotlib>=3.8.0
+seaborn>=0.13.0
+tqdm>=4.66.0
+
+# ========== 웹/API 프레임워크 ==========
+fastapi>=0.109.0
+uvicorn>=0.27.0
+pydantic>=2.5.0
+python-multipart>=0.0.6
+
+# ========== 데이터베이스 ==========
+motor>=3.3.0
+pymongo>=4.6.0
+
+# ========== 유틸리티 ==========
+python-dotenv>=1.0.0
+pyyaml>=6.0.1
+requests>=2.31.0
+aiohttp>=3.9.0
+colorlog>=6.8.0
+sounddevice>=0.4.6  # 마이크 녹음용
+
+# ========== 음성 품질 평가 ==========
+pesq>=0.0.4
+pystoi>=0.3.3
+
+# ========== 파일 처리 ==========
+audioread>=3.0.0
+ffmpeg-python>=0.2.0

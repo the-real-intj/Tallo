@@ -29,3 +29,11 @@
 비주얼: 2D/3D 캐릭터 렌더링 + lip-sync(phoneme→viseme) + 표정 블렌드
 
 부모 승인·저작권 관리·아동 데이터 보호 기능 내장
+
+## Acknowledgements / 출처
+
+This project uses [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) for voice synthesis and training.
+
+- Repository: https://github.com/RVC-Boss/GPT-SoVITS
+- License: MIT License
+- Copyright (c) 2024 RVC-Boss
