@@ -1,4 +1,8 @@
 .venv
 .env
 GPT-SoVITS
-ㄴ
+UI
+.vscode
+data
+.conda
+Spark-TTS
