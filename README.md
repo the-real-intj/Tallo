@@ -32,7 +32,7 @@
 
 ## Acknowledgements / 출처
 
-This project uses [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) for voice synthesis and training.
+This project uses [Zonos](https://github.com/Zyphra/Zonos) for voice synthesis and training.
 
 - Repository: https://github.com/RVC-Boss/GPT-SoVITS
 - License: MIT License
