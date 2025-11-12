@@ -1,0 +1,10 @@
+{
+  "heartsping": {
+    "id": "heartsping",
+    "name": "하츄핑",
+    "description": "귀엽고 사랑스러운 목소리",
+    "language": "ko-kr",
+    "created_at": "2024-11-13T00:00:00",
+    "reference_audio": "audios/[캐치티니핑]하츄핑.wav"
+  }
+}
