@@ -37,3 +37,4 @@ This project uses [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) for voice
 - Repository: https://github.com/RVC-Boss/GPT-SoVITS
 - License: MIT License
 - Copyright (c) 2024 RVC-Boss
+- 오디오 출처: https://youtu.be/Acrv8EqCa4o?si=H1atdHYuU4UVELND, https://youtu.be/CSIryjobwYc?si=th4j6BwfTU-hgs4s

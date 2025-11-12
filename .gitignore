@@ -1,8 +1,8 @@
 .venv
 .env
-GPT-SoVITS
-UI
 .vscode
 data
 .conda
-Spark-TTS
+Zonos
+UI/.next
+UI/node_modules
