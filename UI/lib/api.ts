@@ -32,12 +32,12 @@ const apiClient = axios.create({
  */
 export async function fetchCharacters(): Promise<CharacterResponse[]> {
   // TODO: 실제 API 호출로 변경
-  // const response = await apiClient.get('/api/characters');
-  // return response.data;
+   const response = await apiClient.get('/api/characters');
+   return response.data;
   
   // 현재는 더미 데이터 반환
-  console.warn('[API] fetchCharacters: 더미 데이터 사용 중. 백엔드 연동 필요');
-  return Promise.resolve([]);
+  //console.warn('[API] fetchCharacters: 더미 데이터 사용 중. 백엔드 연동 필요');
+  //return Promise.resolve([]);
 }
 
 /**

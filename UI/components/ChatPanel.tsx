@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Character, Message } from '@/types';
 import { cn } from '@/lib/utils';
+import { ttsClient } from '@/lib/tts-client';
 
 interface ChatPanelProps {
   character: Character;
   messages: Message[];
+  isVoiceEnabled: boolean;
   onClose: () => void;
 }
 
@@ -14,13 +16,80 @@ interface ChatPanelProps {
  * 채팅 패널 컴포넌트
  * 캐릭터와의 대화를 표시
  */
-export function ChatPanel({ character, messages, onClose }: ChatPanelProps) {
+export function ChatPanel({ character, messages, isVoiceEnabled, onClose }: ChatPanelProps) {
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastProcessedMessageIdRef = useRef<number>(-1);
 
   // 새 메시지가 추가되면 자동 스크롤
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // 새로운 캐릭터 메시지가 추가되면 TTS 음성 재생
+  useEffect(() => {
+    const playTTS = async () => {
+      // 음성이 꺼져있으면 재생하지 않음
+      if (!isVoiceEnabled) return;
+
+      // 마지막 메시지가 캐릭터 메시지인지 확인
+      if (messages.length === 0) return;
+
+      const lastMessage = messages[messages.length - 1];
+
+      // 이미 처리한 메시지거나 사용자 메시지면 무시
+      if (lastMessage.id <= lastProcessedMessageIdRef.current || lastMessage.type !== 'character') {
+        return;
+      }
+
+      // 이전 오디오 정리
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+
+      try {
+        setIsLoadingAudio(true);
+        lastProcessedMessageIdRef.current = lastMessage.id;
+
+        // TTS API 호출
+        const audioBlob = await ttsClient.generateTTS({
+          text: lastMessage.text,
+          character_id: character.voice, // 'heartsping', 'female-child-01', etc.
+          language: 'ko-kr',
+          speaking_rate: 1.0,
+          pitch: 1.0,
+          emotion: null,
+        });
+
+        // 오디오 URL 생성 및 재생
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+        audioRef.current = audio;
+
+        audio.onended = () => {
+          URL.revokeObjectURL(audioUrl);
+        };
+
+        await audio.play();
+      } catch (error) {
+        console.error('TTS 생성 실패:', error);
+      } finally {
+        setIsLoadingAudio(false);
+      }
+    };
+
+    playTTS();
+
+    // 컴포넌트 언마운트 시 오디오 정리
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, [messages, character.voice, isVoiceEnabled]);
 
   return (
     <>
@@ -30,7 +99,10 @@ export function ChatPanel({ character, messages, onClose }: ChatPanelProps) {
           <div className="text-4xl">{character.emoji}</div>
           <div className="flex-1">
             <div className="font-bold text-gray-800">{character.name}</div>
-            <div className="text-xs text-gray-600">{character.voice}</div>
+            <div className="text-xs text-gray-600">
+              {character.voice}
+              {isLoadingAudio && <span className="ml-2 text-purple-600">🎤 생성 중...</span>}
+            </div>
           </div>
           <button
             onClick={onClose}

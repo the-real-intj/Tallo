@@ -1,4 +1,5 @@
-const API_BASE_URL = 'http://localhost:8000';
+// API 베이스 URL (환경 변수 사용)
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 // ==================== 타입 정의 ====================
 

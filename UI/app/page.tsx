@@ -22,12 +22,14 @@ export default function HomePage() {
     messages,
     isPlaying,
     currentEmotion,
+    isVoiceEnabled,
     setSelectedCharacter,
     setCurrentPage,
     addMessage,
     clearMessages,
     setIsPlaying,
     setCurrentEmotion,
+    setIsVoiceEnabled,
   } = useAppStore();
 
   // 캐릭터 선택 시 인사 메시지
@@ -117,6 +119,7 @@ export default function HomePage() {
             <ChatPanel
               character={selectedCharacter}
               messages={messages}
+              isVoiceEnabled={isVoiceEnabled}
               onClose={() => setSelectedCharacter(null)}
             />
 
@@ -147,8 +150,15 @@ export default function HomePage() {
               <button className="flex-1 py-2 bg-gray-200 rounded-lg hover:bg-gray-300 transition-all">
                 ⏸️ 일시정지
               </button>
-              <button className="flex-1 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all">
-                🔊 음성 ON
+              <button
+                onClick={() => setIsVoiceEnabled(!isVoiceEnabled)}
+                className={`flex-1 py-2 rounded-lg transition-all ${
+                  isVoiceEnabled
+                    ? 'bg-blue-500 text-white hover:bg-blue-600'
+                    : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+                }`}
+              >
+                {isVoiceEnabled ? '🔊 음성 ON' : '🔇 음성 OFF'}
               </button>
             </div>
           )}

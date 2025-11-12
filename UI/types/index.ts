@@ -63,7 +63,8 @@ export interface AppState {
   messages: Message[];
   isPlaying: boolean;
   currentEmotion: Emotion;
-  
+  isVoiceEnabled: boolean;
+
   // Actions
   setSelectedCharacter: (character: Character | null) => void;
   setCurrentPage: (page: number) => void;
@@ -71,6 +72,7 @@ export interface AppState {
   clearMessages: () => void;
   setIsPlaying: (playing: boolean) => void;
   setCurrentEmotion: (emotion: Emotion) => void;
+  setIsVoiceEnabled: (enabled: boolean) => void;
 }
 
 /**

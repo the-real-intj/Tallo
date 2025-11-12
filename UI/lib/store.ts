@@ -13,11 +13,12 @@ export const useAppStore = create<AppState>((set) => ({
   messages: [],
   isPlaying: false,
   currentEmotion: 'neutral',
+  isVoiceEnabled: false,
 
-  setSelectedCharacter: (character) => 
+  setSelectedCharacter: (character) =>
     set({ selectedCharacter: character }),
 
-  setCurrentPage: (page) => 
+  setCurrentPage: (page) =>
     set({ currentPage: page }),
 
   addMessage: (type, text) =>
@@ -33,12 +34,15 @@ export const useAppStore = create<AppState>((set) => ({
       ],
     })),
 
-  clearMessages: () => 
+  clearMessages: () =>
     set({ messages: [] }),
 
-  setIsPlaying: (playing) => 
+  setIsPlaying: (playing) =>
     set({ isPlaying: playing }),
 
-  setCurrentEmotion: (emotion) => 
+  setCurrentEmotion: (emotion) =>
     set({ currentEmotion: emotion }),
+
+  setIsVoiceEnabled: (enabled) =>
+    set({ isVoiceEnabled: enabled }),
 }));
