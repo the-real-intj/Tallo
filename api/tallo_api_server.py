@@ -309,8 +309,7 @@ async def generate_tts(request: TTSRequest):
             text=request.text,
             speaker=speaker_embedding,
             language=request.language,
-            speaking_rate=request.speaking_rate,
-            pitch=request.pitch
+            speaking_rate=request.speaking_rate
         )
         
         # 감정 추가 (선택적)
@@ -440,7 +439,7 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         app,
-        host= "{IP주소}",
+        host= "0.0.0.0",
         port=8000,
         log_level="info"
     )
