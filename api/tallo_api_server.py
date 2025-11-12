@@ -146,7 +146,7 @@ async def startup_event():
     
     print("\n" + "=" * 60)
     print("✨ Server is ready!")
-    print("📖 API Documentation: http://localhost:8000/docs")
+    print("📖 API Documentation: {IP주소:port}/docs")
     print("=" * 60 + "\n")
 
 # ==================== API 엔드포인트 ====================
@@ -440,7 +440,7 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         app,
-        host="0.0.0.0",
+        host= "{IP주소}",
         port=8000,
         log_level="info"
     )
