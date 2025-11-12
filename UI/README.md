@@ -230,9 +230,7 @@ npm run build
 - [Zustand 문서](https://docs.pmnd.rs/zustand/getting-started/introduction)
 - [React Three Fiber](https://docs.pmnd.rs/react-three-fiber/getting-started/introduction)
 
-## 🤝 기여
 
-이슈 및 PR 환영합니다!
 
 ## 📄 라이선스
 
