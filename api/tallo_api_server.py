@@ -32,10 +32,10 @@ app = FastAPI(
     description="다중 캐릭터 음성 생성 및 관리 시스템"
 )
 
-# CORS 설정 (React와 통신)
+# CORS 설정 (React와 통신 + ngrok)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3000"],  # React 개발 서버
+    allow_origins=["*"],  # 모든 origin 허용 (개발용)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
