@@ -26,7 +26,14 @@ export function CharacterSelector({ onSelect }: CharacterSelectorProps) {
     queryKey: ['characters'],
     queryFn: fetchCharacters,
     retry: false, // 실패 시 재시도 안 함
+    staleTime: 60 * 1000, // 1분
+    refetchOnWindowFocus: false,
   });
+
+  // 디버깅 로그
+  console.log('[CharacterSelector] isLoading:', isLoading);
+  console.log('[CharacterSelector] error:', error);
+  console.log('[CharacterSelector] apiCharacters:', apiCharacters);
 
   // API 데이터를 UI Character 타입으로 변환
   const characters: Character[] = apiCharacters && Array.isArray(apiCharacters)
@@ -39,6 +46,8 @@ export function CharacterSelector({ onSelect }: CharacterSelectorProps) {
         bgColor: 'bg-purple-50', // TODO: API에서 bgColor 정보 추가 필요
       }))
     : dummyCharacters;
+
+  console.log('[CharacterSelector] characters:', characters);
 
   // 로딩 중
   if (isLoading) {
