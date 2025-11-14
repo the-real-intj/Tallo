@@ -1,27 +1,147 @@
 'use client';
 
-import { StoryPage } from '@/types';
+import { useEffect, useRef, useState } from 'react';
+import { StoryPage, Character } from '@/types';
 import { cn } from '@/lib/utils';
+import { pregenerateStoryAudio, getCachedAudioUrl, type PreGenerateResponse } from '@/lib/api';
 
 interface StoryBookPanelProps {
   currentPage: StoryPage | null;
   totalPages: number;
   isPlaying: boolean;
+  isVoiceEnabled?: boolean;
+  character?: Character | null;
+  storyPages?: StoryPage[];  // 전체 동화 페이지 추가
   onNext: () => void;
   onPrevious: () => void;
+  onAudioPregenerated?: (audioMap: Record<number, string>) => void;  // 미리 생성 완료 콜백
 }
 
 /**
  * 동화책 패널 컴포넌트
  * 우측에 동화 페이지를 책 형식으로 표시
+ * 음성 ON 시 미리 생성된 오디오 파일 사용
  */
 export function StoryBookPanel({
   currentPage,
   totalPages,
   isPlaying,
+  isVoiceEnabled = false,
+  character = null,
+  storyPages = [],
   onNext,
   onPrevious,
+  onAudioPregenerated,
 }: StoryBookPanelProps) {
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const [isPregenerating, setIsPregenerating] = useState(false);
+  const [audioMap, setAudioMap] = useState<Record<number, string>>({});
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const lastReadPageRef = useRef<number>(-1);
+  const hasPregeneratedRef = useRef(false);
+
+  // 음성 ON 시 전체 동화 미리 생성 (최초 1회만)
+  useEffect(() => {
+    const pregenerateAllPages = async () => {
+      if (!isVoiceEnabled || !character || !storyPages.length) return;
+      if (hasPregeneratedRef.current || isPregenerating) return;
+
+      hasPregeneratedRef.current = true;
+      setIsPregenerating(true);
+
+      try {
+        console.log('🎤 동화책 전체 페이지 TTS 미리 생성 중...');
+        
+        // 백엔드에 전체 페이지 미리 생성 요청
+        const result: PreGenerateResponse = await pregenerateStoryAudio(
+          character.voice,  // character_id
+          storyPages.map(page => ({
+            page: page.page,
+            text: page.text
+          }))
+        );
+
+        // 오디오 URL 맵핑 생성
+        const urls: Record<number, string> = {};
+        result.pages.forEach(page => {
+          if (page.audio_url) {
+            urls[page.page] = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${page.audio_url}`;
+          }
+        });
+
+        setAudioMap(urls);
+        onAudioPregenerated?.(urls);
+        
+        console.log(`✅ ${result.total_pages}개 페이지 TTS 생성 완료!`);
+      } catch (error) {
+        console.error('❌ 동화 TTS 미리 생성 실패:', error);
+        hasPregeneratedRef.current = false;  // 실패 시 재시도 가능하도록
+      } finally {
+        setIsPregenerating(false);
+      }
+    };
+
+    pregenerateAllPages();
+  }, [isVoiceEnabled, character, storyPages, isPregenerating, onAudioPregenerated]);
+
+  // 페이지가 바뀔 때마다 미리 생성된 오디오 재생
+  useEffect(() => {
+    const playPageAudio = async () => {
+      // 음성이 꺼져있거나, 재생 중이 아니거나, 현재 페이지가 없으면 재생 안 함
+      if (!isVoiceEnabled || !isPlaying || !currentPage) return;
+
+      // 이미 읽은 페이지면 무시
+      if (currentPage.page === lastReadPageRef.current) return;
+
+      // 아직 오디오가 생성되지 않았으면 대기
+      if (!audioMap[currentPage.page]) {
+        console.log(`⏳ 페이지 ${currentPage.page} 오디오 생성 중...`);
+        return;
+      }
+
+      // 이전 오디오 정리
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+
+      try {
+        setIsLoadingAudio(true);
+        lastReadPageRef.current = currentPage.page;
+
+        // 미리 생성된 오디오 파일 재생
+        const audioUrl = audioMap[currentPage.page];
+        const audio = new Audio(audioUrl);
+        audioRef.current = audio;
+
+        audio.onended = () => {
+          setIsLoadingAudio(false);
+        };
+
+        audio.onerror = (error) => {
+          console.error('오디오 재생 실패:', error);
+          setIsLoadingAudio(false);
+        };
+
+        await audio.play();
+        console.log(`🔊 페이지 ${currentPage.page} 재생 중`);
+      } catch (error) {
+        console.error('오디오 재생 실패:', error);
+        setIsLoadingAudio(false);
+      }
+    };
+
+    playPageAudio();
+
+    // 컴포넌트 언마운트 시 오디오 정리
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, [currentPage, isVoiceEnabled, isPlaying, audioMap]);
+
   if (!currentPage) {
     return (
       <div className="w-[500px] bg-white shadow-2xl flex flex-col">
@@ -33,14 +153,32 @@ export function StoryBookPanel({
 
         {/* 빈 상태 */}
         <div className="flex-1 flex items-center justify-center p-8">
-          <div className="text-center text-gray-400">
-            <div className="text-6xl mb-4">📚</div>
-            <p className="text-lg">
-              이야기를 시작하면
-              <br />
-              여기에 동화가 나타나요
-            </p>
-          </div>
+          {isPregenerating ? (
+            <div className="text-center">
+              <div className="text-6xl mb-4 animate-pulse">🎤</div>
+              <p className="text-lg font-semibold text-amber-600 mb-2">
+                동화 음성 준비 중...
+              </p>
+              <p className="text-sm text-gray-500">
+                {character?.name}의 목소리로<br />
+                동화를 미리 생성하고 있어요
+              </p>
+              <div className="mt-4 flex items-center justify-center gap-2">
+                <div className="w-2 h-2 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                <div className="w-2 h-2 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                <div className="w-2 h-2 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-center text-gray-400">
+              <div className="text-6xl mb-4">📚</div>
+              <p className="text-lg">
+                이야기를 시작하면
+                <br />
+                여기에 동화가 나타나요
+              </p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -56,6 +194,7 @@ export function StoryBookPanel({
         <h2 className="text-xl font-bold mb-1">📖 동화책</h2>
         <p className="text-sm opacity-90">
           페이지 {currentPage.page} / {totalPages}
+          {isLoadingAudio && <span className="ml-2">🎤 음성 생성 중...</span>}
         </p>
       </div>
 

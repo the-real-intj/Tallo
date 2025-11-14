@@ -57,7 +57,7 @@ export function ChatPanel({ character, messages, isVoiceEnabled, onClose }: Chat
         const audioBlob = await ttsClient.generateTTS({
           text: lastMessage.text,
           character_id: character.voice, // 'heartsping', 'female-child-01', etc.
-          language: 'ko-kr',
+          language: 'ko', // 한국어 (Zonos는 'ko' 지원)
           speaking_rate: 1.0,
           pitch: 1.0,
           emotion: null,
@@ -129,13 +129,13 @@ export function ChatPanel({ character, messages, isVoiceEnabled, onClose }: Chat
                 'max-w-[80%] rounded-2xl p-3',
                 msg.type === 'user'
                   ? 'bg-blue-500 text-white'
-                  : `bg-gradient-to-r ${character.color} text-white`
+                  : `bg-gradient-to-r ${character.color} text-gray-800`
               )}
             >
               {msg.type === 'character' && (
                 <div className="text-2xl mb-1">{character.emoji}</div>
               )}
-              <div className="text-sm">{msg.text}</div>
+              <div className="text-sm text-gray-900">{msg.text}</div>
             </div>
           </div>
         ))}

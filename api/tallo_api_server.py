@@ -20,6 +20,11 @@ from zonos.model import Zonos
 from zonos.conditioning import make_cond_dict
 from zonos.utils import DEFAULT_DEVICE as device
 
+# torch.compile 비활성화 (Windows 컴파일러 없음)
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
+os.environ["TORCHDYNAMO_DISABLE"] = "1"
+
 # ==================== 설정 ====================
 app = FastAPI(
     title="Zonos Multi-Character TTS API",
@@ -30,7 +35,7 @@ app = FastAPI(
 # CORS 설정 (React와 통신)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # React 개발 서버
+    allow_origins=["http://localhost:3000", "http://localhost:3000"],  # React 개발 서버
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,7 +44,7 @@ app.add_middleware(
 # 디렉토리 설정
 BASE_DIR = Path(__file__).parent.parent
 EMBEDDINGS_DIR = BASE_DIR / "embeddings"
-REFERENCE_DIR = BASE_DIR / "reference_audios"
+REFERENCE_DIR = BASE_DIR / "audios"
 OUTPUTS_DIR = BASE_DIR / "outputs"
 CACHE_DIR = BASE_DIR / "cache"
 
@@ -52,6 +57,7 @@ CHARACTERS_DB = EMBEDDINGS_DIR / "characters.json"
 # 전역 변수
 model = None
 characters_db: Dict = {}
+story_audio_cache: Dict[str, Dict[int, str]] = {}  # {character_id: {page_num: audio_path}}
 
 # ==================== 데이터 모델 ====================
 
@@ -59,7 +65,7 @@ class TTSRequest(BaseModel):
     """TTS 생성 요청"""
     text: str
     character_id: str
-    language: str = "en-us"
+    language: str = "ko"  # 한국어 기본값
     speaking_rate: float = 1.0
     pitch: float = 1.0
     emotion: Optional[str] = None  # happy, sad, angry, fear
@@ -69,7 +75,7 @@ class CharacterInfo(BaseModel):
     id: str
     name: str
     description: Optional[str] = None
-    language: str = "en-us"
+    language: str = "ko"  # 한국어 기본값
     created_at: str
     reference_audio: Optional[str] = None
 
@@ -77,7 +83,18 @@ class CreateCharacterRequest(BaseModel):
     """캐릭터 생성 요청"""
     name: str
     description: Optional[str] = None
-    language: str = "en-us"
+    language: str = "ko"  # 한국어 기본값
+
+class StoryPage(BaseModel):
+    """동화책 페이지"""
+    page: int
+    text: str
+    audio_url: Optional[str] = None  # 미리 생성된 오디오 파일 URL
+
+class PreGenerateStoryRequest(BaseModel):
+    """동화책 전체 TTS 미리 생성 요청"""
+    character_id: str
+    pages: List[Dict]  # [{page: 1, text: "..."}, ...]
 
 # ==================== 유틸리티 함수 ====================
 
@@ -191,7 +208,7 @@ async def get_character(character_id: str):
 async def create_character(
     name: str = Form(...),
     description: str = Form(None),
-    language: str = Form("en-us"),
+    language: str = Form("ko"),  # 한국어 기본값
     reference_audio: UploadFile = File(...)
 ):
     """
@@ -232,7 +249,7 @@ async def create_character(
         
         # 6. 참조 오디오 저장 (선택적)
         ref_audio_path = REFERENCE_DIR / f"{character_id}.wav"
-        torchaudio.save(str(ref_audio_path), wav, sampling_rate)
+        torchaudio.save(str(ref_audio_path), wav, sampling_rate, backend="soundfile")
         
         # 7. 캐릭터 정보 저장
         character_info = {
@@ -338,8 +355,14 @@ async def generate_tts(request: TTSRequest):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{character_name}_{timestamp}.wav"
         output_path = OUTPUTS_DIR / filename
-        
-        torchaudio.save(str(output_path), wavs[0], model.autoencoder.sampling_rate)
+
+        # TorchCodec 오류 방지: backend='soundfile' 사용
+        torchaudio.save(
+            str(output_path),
+            wavs[0],
+            model.autoencoder.sampling_rate,
+            backend="soundfile"
+        )
         
         print(f"✅ TTS generated: {output_path}")
         return FileResponse(
@@ -358,7 +381,7 @@ async def generate_tts(request: TTSRequest):
 async def batch_generate_tts(
     texts: List[str] = Form(...),
     character_id: str = Form(...),
-    language: str = Form("en-us")
+    language: str = Form("ko")  # 한국어 기본값
 ):
     """
     여러 텍스트를 한 번에 생성 (배치 처리)
@@ -392,7 +415,7 @@ async def batch_generate_tts(
             
             filename = f"{character_id}_batch_{idx}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
             output_path = OUTPUTS_DIR / filename
-            torchaudio.save(str(output_path), wavs[0], model.autoencoder.sampling_rate)
+            torchaudio.save(str(output_path), wavs[0], model.autoencoder.sampling_rate, backend="soundfile")
             
             generated_files.append({
                 "index": idx,
@@ -431,6 +454,128 @@ async def health_check():
         "model_loaded": model is not None,
         "device": str(device),
         "characters_count": len(characters_db)
+    }
+
+@app.post("/stories/pregenerate")
+async def pregenerate_story_audio(request: PreGenerateStoryRequest):
+    """
+    동화책 전체 페이지의 TTS를 미리 생성하여 캐싱
+    
+    Args:
+        request: character_id와 pages 리스트
+        
+    Returns:
+        생성된 오디오 파일 경로 맵핑
+    """
+    character_id = request.character_id
+    
+    # 캐릭터 확인
+    if character_id not in characters_db:
+        raise HTTPException(status_code=404, detail="Character not found")
+    
+    # Speaker Embedding 로드
+    speaker_embedding = load_character_embedding(character_id)
+    
+    # 캐릭터별 캐시 디렉토리 생성
+    cache_dir = CACHE_DIR / character_id
+    cache_dir.mkdir(exist_ok=True)
+    
+    generated_pages = []
+    
+    print(f"📚 Pre-generating story audio for character '{character_id}'...")
+    
+    for page_data in request.pages:
+        page_num = page_data["page"]
+        text = page_data["text"]
+        
+        try:
+            # 이미 캐시된 파일이 있는지 확인
+            cached_file = cache_dir / f"page_{page_num}.wav"
+            
+            if cached_file.exists():
+                print(f"✅ Page {page_num} already cached")
+                audio_url = f"/cache/{character_id}/page_{page_num}.wav"
+            else:
+                # TTS 생성
+                print(f"🎤 Generating page {page_num}...")
+                cond_dict = make_cond_dict(
+                    text=text,
+                    speaker=speaker_embedding,
+                    language="ko"
+                )
+                conditioning = model.prepare_conditioning(cond_dict)
+                
+                with torch.no_grad():
+                    codes = model.generate(conditioning)
+                    wavs = model.autoencoder.decode(codes).cpu()
+                
+                # 파일 저장
+                torchaudio.save(
+                    str(cached_file),
+                    wavs[0],
+                    model.autoencoder.sampling_rate,
+                    backend="soundfile"
+                )
+                
+                audio_url = f"/cache/{character_id}/page_{page_num}.wav"
+                print(f"✅ Page {page_num} generated and cached")
+            
+            generated_pages.append({
+                "page": page_num,
+                "text": text,
+                "audio_url": audio_url
+            })
+            
+        except Exception as e:
+            print(f"❌ Error generating page {page_num}: {e}")
+            generated_pages.append({
+                "page": page_num,
+                "text": text,
+                "error": str(e)
+            })
+    
+    # 캐시 정보 저장
+    if character_id not in story_audio_cache:
+        story_audio_cache[character_id] = {}
+    
+    for page_data in generated_pages:
+        if "audio_url" in page_data:
+            story_audio_cache[character_id][page_data["page"]] = page_data["audio_url"]
+    
+    return {
+        "character_id": character_id,
+        "total_pages": len(generated_pages),
+        "pages": generated_pages
+    }
+
+@app.get("/cache/{character_id}/{filename}")
+async def get_cached_audio(character_id: str, filename: str):
+    """
+    캐시된 오디오 파일 제공
+    
+    Args:
+        character_id: 캐릭터 ID
+        filename: 파일명
+    """
+    file_path = CACHE_DIR / character_id / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Cached audio not found")
+    return FileResponse(file_path, media_type="audio/wav")
+
+@app.get("/stories/audio/{character_id}")
+async def get_story_audio_map(character_id: str):
+    """
+    특정 캐릭터의 동화책 오디오 맵핑 조회
+    
+    Returns:
+        {page_num: audio_url} 딕셔너리
+    """
+    if character_id not in story_audio_cache:
+        return {"character_id": character_id, "pages": {}}
+    
+    return {
+        "character_id": character_id,
+        "pages": story_audio_cache[character_id]
     }
 
 # ==================== 메인 실행 ====================

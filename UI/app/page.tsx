@@ -177,6 +177,9 @@ export default function HomePage() {
         currentPage={currentStoryPage || null}
         totalPages={dummyStoryPages.length}
         isPlaying={isPlaying}
+        isVoiceEnabled={isVoiceEnabled}
+        character={selectedCharacter}
+        storyPages={dummyStoryPages}
         onNext={handleNextPage}
         onPrevious={handlePreviousPage}
       />

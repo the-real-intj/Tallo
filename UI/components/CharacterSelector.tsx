@@ -3,6 +3,8 @@
 import { dummyCharacters } from '@/data/characters';
 import { Character } from '@/types';
 import { CharacterCard } from './CharacterCard';
+import { useQuery } from '@tanstack/react-query';
+import { fetchCharacters } from '@/lib/api';
 
 interface CharacterSelectorProps {
   onSelect: (character: Character) => void;
@@ -19,20 +21,50 @@ interface CharacterSelectorProps {
  * - 캐릭터가 없을 때 "새 캐릭터 만들기" 버튼 표시
  */
 export function CharacterSelector({ onSelect }: CharacterSelectorProps) {
-  // TODO: API 연동
-  // const { data: characters, isLoading, error } = useQuery({
-  //   queryKey: ['characters'],
-  //   queryFn: fetchCharacters
-  // });
-  
-  const characters = dummyCharacters;
+  // API 연동 - 실패 시 더미 데이터 사용
+  const { data: apiCharacters, isLoading, error } = useQuery({
+    queryKey: ['characters'],
+    queryFn: fetchCharacters,
+    retry: false, // 실패 시 재시도 안 함
+  });
+
+  // API 데이터를 UI Character 타입으로 변환
+  const characters: Character[] = apiCharacters
+    ? apiCharacters.map((apiChar) => ({
+        id: parseInt(apiChar.id) || 0,
+        name: apiChar.name,
+        emoji: '🎭', // TODO: API에서 emoji 정보 추가 필요
+        color: 'from-purple-400 to-pink-400', // TODO: API에서 color 정보 추가 필요
+        voice: apiChar.id, // TTS API에서 사용할 character_id
+        bgColor: 'bg-purple-50', // TODO: API에서 bgColor 정보 추가 필요
+      }))
+    : dummyCharacters;
+
+  // 로딩 중
+  if (isLoading) {
+    return (
+      <div className="p-6 flex-1 overflow-auto flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-4xl mb-2">⏳</div>
+          <div className="text-gray-600">캐릭터를 불러오는 중...</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 flex-1 overflow-auto">
       <h2 className="text-lg font-bold mb-4 text-gray-800">
         친구를 선택해주세요!
       </h2>
-      
+
+      {/* 에러 메시지 */}
+      {error && (
+        <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
+          API 연결 실패. 더미 데이터를 사용합니다.
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-4">
         {characters.map((char) => (
           <CharacterCard
