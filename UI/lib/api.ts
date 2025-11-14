@@ -12,6 +12,7 @@ const apiClient = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
+    'ngrok-skip-browser-warning': 'true',  // ngrok CORS 우회
   },
   // TODO: 인증 토큰 추가 (getToken 함수 구현 필요)
   // headers: {
