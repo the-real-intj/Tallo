@@ -29,7 +29,7 @@ export function CharacterSelector({ onSelect }: CharacterSelectorProps) {
   });
 
   // API 데이터를 UI Character 타입으로 변환
-  const characters: Character[] = apiCharacters
+  const characters: Character[] = apiCharacters && Array.isArray(apiCharacters)
     ? apiCharacters.map((apiChar) => ({
         id: parseInt(apiChar.id) || 0,
         name: apiChar.name,
