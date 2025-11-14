@@ -1,0 +1,70 @@
+# ==========================================
+# FastAPI 서버 실행 필수 패키지
+# ==========================================
+
+# FastAPI 웹 프레임워크
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+
+# 환경 변수 관리 (.env 파일)
+python-dotenv>=1.0.0
+
+# OpenAI LLM 지원 (선택사항 - LLM 기능 사용 시 필요)
+openai>=1.0.0
+
+# ==========================================
+# PyTorch (CPU 또는 GPU 버전 선택)
+# ==========================================
+
+# CPU 버전 (모든 플랫폼)
+# torch>=2.5.1
+# torchaudio>=2.5.1
+
+# GPU 버전 (CUDA 11.8) - GPU 사용 시 아래 주석 해제하고 위 주석 처리
+# pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# ==========================================
+# Zonos 모델 의존성
+# ==========================================
+
+# 수치 연산
+numpy>=2.2.2
+
+# Hugging Face 모델 로드
+transformers>=4.48.1
+huggingface-hub>=0.28.1
+
+# 오디오 처리
+soundfile>=0.13.1
+
+# 텍스트 처리 (한국어/일본어)
+inflect>=7.5.0
+kanjize>=1.5.0
+phonemizer>=3.3.0
+
+# 일본어 형태소 분석 (한국어 지원용)
+sudachipy>=0.6.10
+sudachidict-full>=20241021
+
+# 기타
+setuptools
+packaging
+
+# ==========================================
+# 설치 참고
+# ==========================================
+# 
+# 1. 기본 설치 (CPU 버전):
+#    pip install -r requirements.txt
+#    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+#
+# 2. GPU 버전 설치 (CUDA 11.8):
+#    pip install -r requirements.txt
+#    pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
+#
+# 3. Zonos 모듈 설치 (필수):
+#    cd Zonos
+#    pip install -e .
+#    cd ..
+
