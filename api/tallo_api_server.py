@@ -15,6 +15,7 @@ import os
 import json
 from pathlib import Path
 from datetime import datetime
+import soundfile as sf  # torchaudio 버그 우회용
 
 from zonos.model import Zonos
 from zonos.conditioning import make_cond_dict
@@ -24,6 +25,11 @@ from zonos.utils import DEFAULT_DEVICE as device
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
 os.environ["TORCHDYNAMO_DISABLE"] = "1"
+
+# espeak 경로 설정 (Windows)
+os.environ["PATH"] = r"C:\Program Files\eSpeak NG" + os.pathsep + os.environ["PATH"]
+os.environ["PHONEMIZER_ESPEAK_PATH"] = r"C:\Program Files\eSpeak NG\espeak-ng.exe"
+os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = r"C:\Program Files\eSpeak NG\libespeak-ng.dll"
 
 # ==================== 설정 ====================
 app = FastAPI(
@@ -249,7 +255,8 @@ async def create_character(
         
         # 6. 참조 오디오 저장 (선택적)
         ref_audio_path = REFERENCE_DIR / f"{character_id}.wav"
-        torchaudio.save(str(ref_audio_path), wav, sampling_rate, backend="soundfile")
+        # torchaudio 2.9.0 버그 우회: soundfile 직접 사용
+        sf.write(str(ref_audio_path), wav.squeeze(0).numpy(), sampling_rate)
         
         # 7. 캐릭터 정보 저장
         character_info = {
@@ -356,12 +363,11 @@ async def generate_tts(request: TTSRequest):
         filename = f"{character_name}_{timestamp}.wav"
         output_path = OUTPUTS_DIR / filename
 
-        # TorchCodec 오류 방지: backend='soundfile' 사용
-        torchaudio.save(
+        # torchaudio 2.9.0 버그 우회: soundfile 직접 사용
+        sf.write(
             str(output_path),
-            wavs[0],
-            model.autoencoder.sampling_rate,
-            backend="soundfile"
+            wavs[0].squeeze(0).numpy(),
+            model.autoencoder.sampling_rate
         )
         
         print(f"✅ TTS generated: {output_path}")
@@ -415,7 +421,8 @@ async def batch_generate_tts(
             
             filename = f"{character_id}_batch_{idx}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
             output_path = OUTPUTS_DIR / filename
-            torchaudio.save(str(output_path), wavs[0], model.autoencoder.sampling_rate, backend="soundfile")
+            # torchaudio 2.9.0 버그 우회: soundfile 직접 사용
+            sf.write(str(output_path), wavs[0].squeeze(0).numpy(), model.autoencoder.sampling_rate)
             
             generated_files.append({
                 "index": idx,
@@ -510,11 +517,11 @@ async def pregenerate_story_audio(request: PreGenerateStoryRequest):
                     wavs = model.autoencoder.decode(codes).cpu()
                 
                 # 파일 저장
-                torchaudio.save(
+                # torchaudio 2.9.0 버그 우회: soundfile 직접 사용
+                sf.write(
                     str(cached_file),
-                    wavs[0],
-                    model.autoencoder.sampling_rate,
-                    backend="soundfile"
+                    wavs[0].squeeze(0).numpy(),
+                    model.autoencoder.sampling_rate
                 )
                 
                 audio_url = f"/cache/{character_id}/page_{page_num}.wav"
