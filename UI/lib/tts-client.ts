@@ -47,14 +47,19 @@ class ZonosTTSClient {
   private baseURL: string;
 
   constructor(baseURL: string = API_BASE_URL) {
-    this.baseURL = baseURL;
+    // URL 끝의 슬래시 제거
+    this.baseURL = baseURL.replace(/\/$/, '');
   }
 
   /**
    * 서버 상태 확인
    */
   async getStatus(): Promise<ServerStatus> {
-    const response = await fetch(`${this.baseURL}/`);
+    const response = await fetch(`${this.baseURL}/`, {
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+      },
+    });
     if (!response.ok) throw new Error('Failed to get server status');
     return response.json();
   }
@@ -63,7 +68,11 @@ class ZonosTTSClient {
    * 헬스 체크
    */
   async healthCheck(): Promise<HealthCheck> {
-    const response = await fetch(`${this.baseURL}/health`);
+    const response = await fetch(`${this.baseURL}/health`, {
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+      },
+    });
     if (!response.ok) throw new Error('Health check failed');
     return response.json();
   }
@@ -72,7 +81,11 @@ class ZonosTTSClient {
    * 모든 캐릭터 목록 조회
    */
   async getCharacters(): Promise<Character[]> {
-    const response = await fetch(`${this.baseURL}/characters`);
+    const response = await fetch(`${this.baseURL}/characters`, {
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+      },
+    });
     if (!response.ok) throw new Error('Failed to fetch characters');
     return response.json();
   }
@@ -81,7 +94,11 @@ class ZonosTTSClient {
    * 특정 캐릭터 정보 조회
    */
   async getCharacter(characterId: string): Promise<Character> {
-    const response = await fetch(`${this.baseURL}/characters/${characterId}`);
+    const response = await fetch(`${this.baseURL}/characters/${characterId}`, {
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+      },
+    });
     if (!response.ok) throw new Error('Failed to fetch character');
     return response.json();
   }
@@ -103,6 +120,9 @@ class ZonosTTSClient {
 
     const response = await fetch(`${this.baseURL}/characters/create`, {
       method: 'POST',
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+      },
       body: formData,
     });
 
@@ -120,6 +140,9 @@ class ZonosTTSClient {
   async deleteCharacter(characterId: string): Promise<{ message: string }> {
     const response = await fetch(`${this.baseURL}/characters/${characterId}`, {
       method: 'DELETE',
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+      },
     });
 
     if (!response.ok) throw new Error('Failed to delete character');
@@ -134,6 +157,7 @@ class ZonosTTSClient {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true',
       },
       body: JSON.stringify(request),
     });
@@ -157,6 +181,9 @@ class ZonosTTSClient {
 
     const response = await fetch(`${this.baseURL}/tts/batch`, {
       method: 'POST',
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+      },
       body: formData,
     });
 
@@ -168,7 +195,11 @@ class ZonosTTSClient {
    * 오디오 파일 다운로드
    */
   async downloadOutput(filename: string): Promise<Blob> {
-    const response = await fetch(`${this.baseURL}/outputs/${filename}`);
+    const response = await fetch(`${this.baseURL}/outputs/${filename}`, {
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+      },
+    });
     if (!response.ok) throw new Error('Failed to download file');
     return response.blob();
   }
