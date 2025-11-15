@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 커스텀 애니메이션 */
+@layer utilities {
+  .chat-message {
+    animation: slideIn 0.3s ease-out;
+  }
+
+  @keyframes slideIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .page-turn {
+    transition: transform 0.6s cubic-bezier(0.645, 0.045, 0.355, 1);
+  }
+
+  .page-turn:hover {
+    transform: scale(1.02);
+  }
+
+  .character-pulse {
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.05);
+    }
+  }
+
+  .storybook-page {
+    background: linear-gradient(to bottom, #fefefe 0%, #f9f9f9 100%);
+    box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.05);
+  }
+
+  .choice-button {
+    transition: all 0.3s ease;
+  }
+
+  .choice-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  .character-card {
+    transition: all 0.3s ease;
+    cursor: pointer;
+  }
+
+  .character-card:hover {
+    transform: scale(1.05);
+  }
+
+  .character-card.selected {
+    border: 3px solid #3b82f6;
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+  }
+}
+
+/* 스크롤바 스타일링 */
+@layer base {
+  *::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: #f1f1f1;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: #555;
+  }
+}
