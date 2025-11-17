@@ -870,6 +870,49 @@ async def chat_with_llm(request: LLMChatRequest):
 
 # ==================== MongoDB 동화 API 엔드포인트 ====================
 
+@app.get("/stories/debug")
+async def debug_mongodb():
+    """MongoDB 연결 상태 및 컬렉션 정보 디버깅"""
+    debug_info = {
+        "mongodb_available": MONGODB_AVAILABLE,
+        "mongodb_connected": mongodb_db is not None,
+        "database_name": os.getenv("MONGODB_DB_NAME", "not set"),
+        "collections": [],
+        "stories_count": 0,
+        "error": None
+    }
+    
+    if not MONGODB_AVAILABLE:
+        debug_info["error"] = "pymongo not installed"
+        return debug_info
+    
+    if mongodb_db is None:
+        debug_info["error"] = "MongoDB not connected"
+        return debug_info
+    
+    try:
+        # 컬렉션 목록 가져오기
+        debug_info["collections"] = mongodb_db.list_collection_names()
+        
+        # "texts" 컬렉션 확인
+        if "texts" in debug_info["collections"]:
+            stories_collection = mongodb_db["texts"]
+            debug_info["stories_count"] = stories_collection.count_documents({})
+            
+            # 샘플 문서 하나 가져오기
+            sample = stories_collection.find_one()
+            if sample:
+                debug_info["sample_doc"] = {
+                    "_id": str(sample.get("_id", "")),
+                    "filename": sample.get("filename", ""),
+                    "has_content": bool(sample.get("content", "")),
+                    "content_length": len(sample.get("content", "")) if sample.get("content") else 0
+                }
+    except Exception as e:
+        debug_info["error"] = str(e)
+    
+    return debug_info
+
 @app.get("/stories/list", response_model=StoryListResponse)
 async def list_stories(limit: int = 5):
     """
@@ -888,14 +931,15 @@ async def list_stories(limit: int = 5):
         )
     
     try:
-        # MongoDB 컬렉션 이름: "텍스트" (실제 컬렉션 이름)
-        stories_collection = mongodb_db["텍스트"]
+        # MongoDB 컬렉션 이름: "texts" (실제 컬렉션 이름)
+        stories_collection = mongodb_db["texts"]
         
         # 최대 5개로 제한
         limit = min(limit, 5)
         
         # MongoDB에서 동화 목록 가져오기
-        stories_cursor = stories_collection.find().limit(limit).sort("created_at", -1)
+        # created_at이 없을 수 있으므로 _id로 정렬 (최신순)
+        stories_cursor = stories_collection.find().limit(limit).sort("_id", -1)
         stories_list = []
         
         for story_doc in stories_cursor:
@@ -949,7 +993,7 @@ async def get_story(story_id: str):
     
     try:
         from bson import ObjectId
-        stories_collection = mongodb_db["텍스트"]
+        stories_collection = mongodb_db["texts"]
         
         story_doc = stories_collection.find_one({"_id": ObjectId(story_id)})
         
@@ -1064,7 +1108,7 @@ async def pregenerate_story_pages_audio(story_id: str, character_id: str):
     
     try:
         from bson import ObjectId
-        stories_collection = mongodb_db["텍스트"]
+        stories_collection = mongodb_db["texts"]
         
         story_doc = stories_collection.find_one({"_id": ObjectId(story_id)})
         if not story_doc:
