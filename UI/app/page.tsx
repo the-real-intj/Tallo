@@ -2,14 +2,15 @@
 
 import { useEffect } from 'react';
 import { useAppStore } from '@/lib/store';
-import { dummyStoryPages } from '@/data/storyPages';
 import { CharacterSelector } from '@/components/CharacterSelector';
+import { StorySelector } from '@/components/StorySelector';
 import { ChatPanel } from '@/components/ChatPanel';
 import { CharacterViewer } from '@/components/CharacterViewer';
 import { StoryBookPanel } from '@/components/StoryBookPanel';
 import { ChoiceButtons } from '@/components/ChoiceButtons';
 import { delay } from '@/lib/utils';
-import type { Choice } from '@/types';
+import type { Choice, Story } from '@/types';
+import { chatWithLLMAndTTS, pregenerateStoryPagesAudio } from '@/lib/api';
 
 /**
  * 메인 페이지
@@ -18,12 +19,14 @@ import type { Choice } from '@/types';
 export default function HomePage() {
   const {
     selectedCharacter,
+    selectedStory,
     currentPage,
     messages,
     isPlaying,
     currentEmotion,
     isVoiceEnabled,
     setSelectedCharacter,
+    setSelectedStory,
     setCurrentPage,
     addMessage,
     clearMessages,
@@ -52,42 +55,83 @@ export default function HomePage() {
     setIsPlaying(false);
   };
 
+  // 스토리 선택 핸들러
+  const handleStorySelect = async (story: Story) => {
+    setSelectedStory(story);
+    setCurrentPage(1);
+    setIsPlaying(false);
+    
+    // 스토리 선택 시 인사 메시지
+    if (selectedCharacter) {
+      addMessage(
+        'character',
+        `${story.title} 이야기를 시작할까?`
+      );
+    }
+  };
+
   // 이야기 시작
   const handleStartStory = async () => {
+    if (!selectedStory) {
+      addMessage('character', '먼저 동화를 선택해주세요!');
+      return;
+    }
+
+    if (!selectedCharacter) {
+      addMessage('character', '먼저 캐릭터를 선택해주세요!');
+      return;
+    }
+
+    // MongoDB 스토리 재생
     setIsPlaying(true);
     setCurrentPage(1);
     setCurrentEmotion('happy');
     
-    addMessage('character', '좋아! 그럼 이야기를 시작해볼까?');
+    addMessage('character', `${selectedStory.title} 이야기를 시작할게!`);
     
-    await delay(1000);
-    addMessage('character', dummyStoryPages[0].text);
+    // 페이지별 오디오가 없으면 미리 생성
+    if (selectedStory.pages && selectedStory.pages.length > 0) {
+      const hasAudio = selectedStory.pages.some(p => p.audio_url);
+      if (!hasAudio && isVoiceEnabled) {
+        try {
+          addMessage('character', '오디오를 준비하고 있어요...');
+          const result = await pregenerateStoryPagesAudio(selectedStory.id, selectedCharacter.voice);
+          addMessage('character', '준비 완료! 이제 들려드릴게요.');
+          
+          // 생성된 오디오 URL을 pages에 반영
+          if (selectedStory.pages) {
+            const updatedPages = selectedStory.pages.map(page => {
+              const generated = result.generated_pages.find(gp => gp.page === page.page);
+              return generated?.audio_url 
+                ? { ...page, audio_url: generated.audio_url }
+                : page;
+            });
+            setSelectedStory({ ...selectedStory, pages: updatedPages });
+          }
+        } catch (error) {
+          console.error('오디오 생성 실패:', error);
+          addMessage('character', '오디오 생성에 실패했어요. 텍스트로 읽어드릴게요.');
+        }
+      }
+    }
   };
 
-  // 선택지 선택
+  // 선택지 선택 (MongoDB 스토리는 단일 페이지이므로 사용 안 함)
   const handleChoice = async (choice: Choice) => {
     addMessage('user', choice.text);
     
     await delay(800);
-    setCurrentPage(choice.next);
-    
-    const nextPage = dummyStoryPages.find((p) => p.page === choice.next);
-    if (nextPage) {
-      addMessage('character', nextPage.text);
-      setCurrentEmotion('excited');
-    }
+    // MongoDB 스토리는 선택지가 없으므로 처리하지 않음
+    addMessage('character', '좋은 선택이에요!');
+    setCurrentEmotion('excited');
   };
 
   // 다음 페이지
   const handleNextPage = async () => {
-    if (currentPage < dummyStoryPages.length) {
+    if (!selectedStory || !selectedStory.pages) return;
+    
+    if (currentPage < selectedStory.pages.length) {
       setCurrentPage(currentPage + 1);
-      const nextPageData = dummyStoryPages.find((p) => p.page === currentPage + 1);
-      
-      if (nextPageData) {
-        await delay(300);
-        addMessage('character', nextPageData.text);
-      }
     }
   };
 
@@ -98,8 +142,32 @@ export default function HomePage() {
     }
   };
 
-  // 현재 동화 페이지
-  const currentStoryPage = dummyStoryPages.find((p) => p.page === currentPage);
+  // 현재 동화 페이지 (선택된 스토리의 pages 배열에서 가져오기)
+  const currentStoryPage = selectedStory
+    ? (() => {
+        // pages 배열이 있으면 사용, 없으면 전체 텍스트를 단일 페이지로
+        if (selectedStory.pages && selectedStory.pages.length > 0) {
+          const pageInfo = selectedStory.pages.find(p => p.page === currentPage);
+          if (pageInfo) {
+            return {
+              page: currentPage,
+              text: pageInfo.text,
+              image: '📖',
+              choices: null,
+              audio_url: pageInfo.audio_url,
+            };
+          }
+        }
+        // pages가 없으면 전체 텍스트 사용 (하위 호환)
+        return {
+          page: 1,
+          text: selectedStory.text,
+          image: '📖',
+          choices: null,
+          audio_url: selectedStory.audio_url,
+        };
+      })()
+    : null;
 
   return (
     <div className="h-screen flex bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 overflow-hidden">
@@ -120,7 +188,39 @@ export default function HomePage() {
               character={selectedCharacter}
               messages={messages}
               isVoiceEnabled={isVoiceEnabled}
-              onClose={() => setSelectedCharacter(null)}
+              onClose={() => {
+                setSelectedCharacter(null);
+                setSelectedStory(null);
+              }}
+              onSendMessage={async (text) => {
+                // 사용자 메시지 추가
+                addMessage('user', text);
+                
+                // 스토리 오디오 정지 (이미 ChatPanel에서 처리됨)
+                
+                // LLM 응답 받기
+                try {
+                  const response = await chatWithLLMAndTTS({
+                    message: text,
+                    character_id: selectedCharacter.voice,
+                    character_name: selectedCharacter.name,
+                    return_audio: true,
+                  });
+                  
+                  // LLM 응답 메시지 추가
+                  addMessage('character', response.text);
+                  
+                  // 오디오 재생 (audio_url이 있으면)
+                  if (response.audio_url) {
+                    const audioUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${response.audio_url}`;
+                    const audio = new Audio(audioUrl);
+                    await audio.play();
+                  }
+                } catch (error) {
+                  console.error('LLM 채팅 에러:', error);
+                  addMessage('character', '죄송해요, 답변을 생성하는데 문제가 생겼어요.');
+                }
+              }}
             />
 
             {/* 선택지 버튼 (채팅 영역 바로 아래) */}
@@ -140,10 +240,10 @@ export default function HomePage() {
           {!isPlaying ? (
             <button
               onClick={handleStartStory}
-              disabled={!selectedCharacter}
+              disabled={!selectedCharacter || !selectedStory}
               className="w-full py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl font-bold hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              🎬 이야기 시작하기
+              {selectedStory ? '🎬 동화 재생하기' : '📚 동화를 선택해주세요'}
             </button>
           ) : (
             <div className="flex gap-2">
@@ -172,17 +272,33 @@ export default function HomePage() {
         currentEmotion={currentEmotion}
       />
 
-      {/* 우측 패널: 동화책 뷰어 */}
-      <StoryBookPanel
-        currentPage={currentStoryPage || null}
-        totalPages={dummyStoryPages.length}
-        isPlaying={isPlaying}
-        isVoiceEnabled={isVoiceEnabled}
-        character={selectedCharacter}
-        storyPages={dummyStoryPages}
-        onNext={handleNextPage}
-        onPrevious={handlePreviousPage}
-      />
+      {/* 우측 패널: 스토리 선택 또는 동화책 뷰어 */}
+      {!selectedStory ? (
+        <div className="w-96 bg-white shadow-2xl flex flex-col">
+          <div className="bg-gradient-to-r from-blue-500 to-cyan-500 p-6 text-white">
+            <h2 className="text-xl font-bold mb-1">📚 동화 선택</h2>
+            <p className="text-sm opacity-90">읽고 싶은 동화를 선택하세요</p>
+          </div>
+          <StorySelector onSelect={handleStorySelect} />
+        </div>
+      ) : (
+        <StoryBookPanel
+          currentPage={currentStoryPage || null}
+          totalPages={selectedStory?.pages?.length || 1}
+          isPlaying={isPlaying}
+          isVoiceEnabled={isVoiceEnabled}
+          character={selectedCharacter}
+          storyPages={selectedStory?.pages?.map(p => ({
+            page: p.page,
+            text: p.text,
+            image: '📖',
+            choices: null,
+            audio_url: p.audio_url,
+          })) || []}
+          onNext={handleNextPage}
+          onPrevious={handlePreviousPage}
+        />
+      )}
     </div>
   );
 }

@@ -32,8 +32,8 @@ export interface StoryPage {
   text: string;
   image: string; // 현재는 이모지, 나중에 이미지 URL로 변경
   choices: Choice[] | null;
+  audio_url?: string; // 미리 생성된 오디오 URL (MongoDB 스토리용)
   // TODO: 백엔드 연동 시 추가 필드
-  // audioUrl?: string;
   // phonemes?: Phoneme[];
   // emotion?: 'happy' | 'sad' | 'excited' | 'neutral';
 }
@@ -55,10 +55,33 @@ export interface Message {
 export type Emotion = 'happy' | 'sad' | 'excited' | 'neutral' | 'surprised';
 
 /**
+ * 스토리 페이지 인터페이스
+ */
+export interface StoryPageInfo {
+  page: number;
+  text: string;
+  audio_url?: string;
+}
+
+/**
+ * 스토리 인터페이스 (MongoDB)
+ */
+export interface Story {
+  id: string;
+  title: string;
+  text: string;
+  pages?: StoryPageInfo[];  // 페이지별로 나눈 텍스트와 오디오
+  audio_url?: string;
+  character_id?: string;
+  created_at?: string;
+}
+
+/**
  * 애플리케이션 상태 인터페이스 (Zustand용)
  */
 export interface AppState {
   selectedCharacter: Character | null;
+  selectedStory: Story | null;
   currentPage: number;
   messages: Message[];
   isPlaying: boolean;
@@ -67,6 +90,7 @@ export interface AppState {
 
   // Actions
   setSelectedCharacter: (character: Character | null) => void;
+  setSelectedStory: (story: Story | null) => void;
   setCurrentPage: (page: number) => void;
   addMessage: (type: 'character' | 'user', text: string) => void;
   clearMessages: () => void;

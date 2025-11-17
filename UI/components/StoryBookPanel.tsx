@@ -93,12 +93,6 @@ export function StoryBookPanel({
       // 이미 읽은 페이지면 무시
       if (currentPage.page === lastReadPageRef.current) return;
 
-      // 아직 오디오가 생성되지 않았으면 대기
-      if (!audioMap[currentPage.page]) {
-        console.log(`⏳ 페이지 ${currentPage.page} 오디오 생성 중...`);
-        return;
-      }
-
       // 이전 오디오 정리
       if (audioRef.current) {
         audioRef.current.pause();
@@ -109,8 +103,28 @@ export function StoryBookPanel({
         setIsLoadingAudio(true);
         lastReadPageRef.current = currentPage.page;
 
-        // 미리 생성된 오디오 파일 재생
-        const audioUrl = audioMap[currentPage.page];
+        let audioUrl: string;
+
+        // MongoDB 스토리의 audio_url이 있으면 우선 사용
+        if (currentPage.audio_url) {
+          // 상대 경로면 API URL 추가
+          if (currentPage.audio_url.startsWith('/')) {
+            audioUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${currentPage.audio_url}`;
+          } else {
+            audioUrl = currentPage.audio_url;
+          }
+        } 
+        // 미리 생성된 오디오 맵에서 찾기
+        else if (audioMap[currentPage.page]) {
+          audioUrl = audioMap[currentPage.page];
+        } 
+        // 둘 다 없으면 대기
+        else {
+          console.log(`⏳ 페이지 ${currentPage.page} 오디오 생성 중...`);
+          setIsLoadingAudio(false);
+          return;
+        }
+
         const audio = new Audio(audioUrl);
         audioRef.current = audio;
 
@@ -141,6 +155,24 @@ export function StoryBookPanel({
       }
     };
   }, [currentPage, isVoiceEnabled, isPlaying, audioMap]);
+
+  // 오디오 정지 함수 (외부에서 호출 가능하도록)
+  const stopAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+      setIsLoadingAudio(false);
+    }
+  };
+
+  // 전역으로 오디오 정지 함수 노출 (ChatPanel에서 사용)
+  useEffect(() => {
+    (window as any).stopStoryAudio = stopAudio;
+    return () => {
+      delete (window as any).stopStoryAudio;
+    };
+  }, []);
 
   if (!currentPage) {
     return (
