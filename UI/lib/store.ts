@@ -26,17 +26,25 @@ export const useAppStore = create<AppState>((set) => ({
     set({ currentPage: page }),
 
   addMessage: (type, text) =>
-    set((state) => ({
-      messages: [
-        ...state.messages,
-        {
-          id: Date.now(),
-          type,
-          text,
-          timestamp: Date.now(),
-        },
-      ],
-    })),
+    set((state) => {
+      // 고유한 ID 생성: 마지막 메시지 ID + 1 또는 타임스탬프 + 랜덤
+      const lastId = state.messages.length > 0 
+        ? Math.max(...state.messages.map(m => m.id))
+        : 0;
+      const newId = lastId + 1;
+      
+      return {
+        messages: [
+          ...state.messages,
+          {
+            id: newId,
+            type,
+            text,
+            timestamp: Date.now(),
+          },
+        ],
+      };
+    }),
 
   clearMessages: () =>
     set({ messages: [] }),

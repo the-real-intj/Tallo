@@ -151,6 +151,39 @@ export async function getStoryAudio(storyId: string): Promise<Blob> {
 }
 
 /**
+ * 동화 오디오 파일 확인
+ * GET /stories/{story_id}/check-audio
+ */
+export async function checkStoryAudioFiles(
+  storyId: string,
+  characterId: string
+): Promise<{
+  story_id: string;
+  character_id: string;
+  total_pages: number;
+  existing_audio_count: number;
+  existing_audio: Array<{
+    page: number;
+    text: string;
+    audio_url: string;
+  }>;
+  all_audio_exists: boolean;
+}> {
+  try {
+    const response = await apiClient.get(
+      `/stories/${storyId}/check-audio`,
+      {
+        params: { character_id: characterId }
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('[API] checkStoryAudioFiles 에러:', error);
+    throw error;
+  }
+}
+
+/**
  * 동화 페이지별 오디오 미리 생성
  * POST /stories/{story_id}/pregenerate-audio
  */

@@ -10,7 +10,7 @@ import { StoryBookPanel } from '@/components/StoryBookPanel';
 import { ChoiceButtons } from '@/components/ChoiceButtons';
 import { delay } from '@/lib/utils';
 import type { Choice, Story } from '@/types';
-import { chatWithLLMAndTTS, pregenerateStoryPagesAudio } from '@/lib/api';
+import { chatWithLLMAndTTS, pregenerateStoryPagesAudio, checkStoryAudioFiles } from '@/lib/api';
 
 /**
  * 메인 페이지
@@ -90,10 +90,23 @@ export default function HomePage() {
     addMessage('character', `${selectedStory.title} 이야기를 시작할게!`);
     
     // 페이지별 오디오가 없으면 미리 생성
-    if (selectedStory.pages && selectedStory.pages.length > 0) {
-      const hasAudio = selectedStory.pages.some(p => p.audio_url);
-      if (!hasAudio && isVoiceEnabled) {
-        try {
+    if (selectedStory.pages && selectedStory.pages.length > 0 && isVoiceEnabled) {
+      try {
+        // 먼저 이미 생성된 오디오 파일이 있는지 확인
+        const audioCheck = await checkStoryAudioFiles(selectedStory.id, selectedCharacter.voice);
+        
+        if (audioCheck.all_audio_exists && audioCheck.existing_audio.length > 0) {
+          // 이미 모든 오디오가 있으면 그대로 사용
+          console.log('✅ 이미 생성된 오디오 파일 사용:', audioCheck.existing_audio_count);
+          const updatedPages = selectedStory.pages.map(page => {
+            const existing = audioCheck.existing_audio.find(ea => ea.page === page.page);
+            return existing?.audio_url 
+              ? { ...page, audio_url: existing.audio_url }
+              : page;
+          });
+          setSelectedStory({ ...selectedStory, pages: updatedPages });
+        } else {
+          // 일부만 있거나 없으면 생성
           addMessage('character', '오디오를 준비하고 있어요...');
           const result = await pregenerateStoryPagesAudio(selectedStory.id, selectedCharacter.voice);
           addMessage('character', '준비 완료! 이제 들려드릴게요.');
@@ -108,10 +121,10 @@ export default function HomePage() {
             });
             setSelectedStory({ ...selectedStory, pages: updatedPages });
           }
-        } catch (error) {
-          console.error('오디오 생성 실패:', error);
-          addMessage('character', '오디오 생성에 실패했어요. 텍스트로 읽어드릴게요.');
         }
+      } catch (error) {
+        console.error('오디오 확인/생성 실패:', error);
+        addMessage('character', '오디오 생성에 실패했어요. 텍스트로 읽어드릴게요.');
       }
     }
   };

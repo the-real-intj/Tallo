@@ -24,75 +24,106 @@ export function ChatPanel({ character, messages, isVoiceEnabled, onClose, onSend
   const [inputText, setInputText] = useState('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastProcessedMessageIdRef = useRef<number>(-1);
+  const ttsQueueRef = useRef<Array<{ id: number; text: string }>>([]);
+  const isProcessingQueueRef = useRef<boolean>(false);
 
   // 새 메시지가 추가되면 자동 스크롤
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 새로운 캐릭터 메시지가 추가되면 TTS 음성 재생
-  useEffect(() => {
-    const playTTS = async () => {
-      // 음성이 꺼져있으면 재생하지 않음
-      if (!isVoiceEnabled) return;
+  // TTS 큐 처리 함수 (직렬로 하나씩 처리)
+  const processTTSQueue = async () => {
+    // 이미 처리 중이면 대기
+    if (isProcessingQueueRef.current) return;
+    
+    // 큐가 비어있으면 종료
+    if (ttsQueueRef.current.length === 0) {
+      setIsLoadingAudio(false);
+      return;
+    }
 
-      // 마지막 메시지가 캐릭터 메시지인지 확인
-      if (messages.length === 0) return;
+    isProcessingQueueRef.current = true;
+    setIsLoadingAudio(true);
 
-      const lastMessage = messages[messages.length - 1];
+    // 큐에서 첫 번째 메시지 가져오기
+    const messageToProcess = ttsQueueRef.current.shift();
+    if (!messageToProcess) {
+      isProcessingQueueRef.current = false;
+      setIsLoadingAudio(false);
+      return;
+    }
 
-      // 이미 처리한 메시지거나 사용자 메시지면 무시
-      if (lastMessage.id <= lastProcessedMessageIdRef.current || lastMessage.type !== 'character') {
-        return;
-      }
+    try {
+      // TTS API 호출
+      const audioBlob = await ttsClient.generateTTS({
+        text: messageToProcess.text,
+        character_id: character.voice,
+        language: 'ko',
+        speaking_rate: 1.0,
+        pitch: 1.0,
+        emotion: null,
+      });
 
-      // 이전 오디오 정리
-      if (audioRef.current) {
-        audioRef.current.pause();
+      // 오디오 URL 생성 및 재생
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+
+      // 재생 완료 후 다음 메시지 처리
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
         audioRef.current = null;
-      }
+        lastProcessedMessageIdRef.current = messageToProcess.id;
+        isProcessingQueueRef.current = false;
+        // 다음 메시지 처리
+        processTTSQueue();
+      };
 
-      try {
-        setIsLoadingAudio(true);
-        lastProcessedMessageIdRef.current = lastMessage.id;
+      await audio.play();
+    } catch (error) {
+      console.error('TTS 생성 실패:', error);
+      lastProcessedMessageIdRef.current = messageToProcess.id;
+      isProcessingQueueRef.current = false;
+      // 에러가 나도 다음 메시지 처리
+      processTTSQueue();
+    }
+  };
 
-        // TTS API 호출
-        const audioBlob = await ttsClient.generateTTS({
-          text: lastMessage.text,
-          character_id: character.voice, // 'heartsping', 'female-child-01', etc.
-          language: 'ko', // 한국어 (Zonos는 'ko' 지원)
-          speaking_rate: 1.0,
-          pitch: 1.0,
-          emotion: null,
-        });
+  // 새로운 캐릭터 메시지가 추가되면 TTS 큐에 추가
+  useEffect(() => {
+    if (!isVoiceEnabled || messages.length === 0) return;
 
-        // 오디오 URL 생성 및 재생
-        const audioUrl = URL.createObjectURL(audioBlob);
-        const audio = new Audio(audioUrl);
-        audioRef.current = audio;
+    // 처리되지 않은 캐릭터 메시지들을 큐에 추가
+    const unprocessedMessages = messages.filter(
+      (msg) => msg.type === 'character' && msg.id > lastProcessedMessageIdRef.current
+    );
 
-        audio.onended = () => {
-          URL.revokeObjectURL(audioUrl);
-        };
+    if (unprocessedMessages.length > 0) {
+      // 큐에 추가
+      unprocessedMessages.forEach((msg) => {
+        // 이미 큐에 있는 메시지는 추가하지 않음
+        if (!ttsQueueRef.current.some((q) => q.id === msg.id)) {
+          ttsQueueRef.current.push({ id: msg.id, text: msg.text });
+        }
+      });
 
-        await audio.play();
-      } catch (error) {
-        console.error('TTS 생성 실패:', error);
-      } finally {
-        setIsLoadingAudio(false);
-      }
-    };
+      // 큐 처리 시작
+      processTTSQueue();
+    }
+  }, [messages, character.voice, isVoiceEnabled]);
 
-    playTTS();
-
-    // 컴포넌트 언마운트 시 오디오 정리
+  // 컴포넌트 언마운트 시 오디오 정리
+  useEffect(() => {
     return () => {
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;
       }
+      ttsQueueRef.current = [];
+      isProcessingQueueRef.current = false;
     };
-  }, [messages, character.voice, isVoiceEnabled]);
+  }, []);
 
   return (
     <>

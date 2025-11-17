@@ -3,7 +3,7 @@ Zonos Multi-Character TTS API Server
 여러 캐릭터의 Speaker Embedding을 관리하고 TTS를 생성하는 FastAPI 서버
 """
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -732,16 +732,17 @@ async def pregenerate_story_audio(request: PreGenerateStoryRequest):
         "pages": generated_pages
     }
 
-@app.get("/cache/{character_id}/{filename}")
-async def get_cached_audio(character_id: str, filename: str):
+@app.get("/cache/{character_id}/{story_id}/{filename}")
+async def get_cached_audio(character_id: str, story_id: str, filename: str):
     """
     캐시된 오디오 파일 제공
     
     Args:
         character_id: 캐릭터 ID
+        story_id: 스토리 ID
         filename: 파일명
     """
-    file_path = CACHE_DIR / character_id / filename
+    file_path = CACHE_DIR / character_id / story_id / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Cached audio not found")
     return FileResponse(file_path, media_type="audio/wav")
@@ -1153,9 +1154,9 @@ async def pregenerate_story_pages_audio(story_id: str, character_id: str = Form(
         content = story_doc.get("content", "")
         pages = split_story_into_pages(content)
         
-        # 스토리별 오디오 디렉토리 생성
-        story_audio_dir = OUTPUTS_DIR / "stories" / story_id
-        story_audio_dir.mkdir(parents=True, exist_ok=True)
+        # 캐릭터별, 스토리별 캐시 디렉토리 생성 (실제 저장 경로: cache/{character_id}/{story_id}/page_X.wav)
+        cache_dir = CACHE_DIR / character_id / story_id
+        cache_dir.mkdir(parents=True, exist_ok=True)
         
         generated_pages = []
         
@@ -1165,12 +1166,12 @@ async def pregenerate_story_pages_audio(story_id: str, character_id: str = Form(
             try:
                 # 페이지별 오디오 파일 경로
                 audio_filename = f"page_{page.page}.wav"
-                audio_path = story_audio_dir / audio_filename
+                audio_path = cache_dir / audio_filename
                 
                 # 이미 생성된 파일이 있으면 스킵
                 if audio_path.exists():
                     print(f"✅ Page {page.page} already exists, skipping...")
-                    audio_url = f"/outputs/stories/{story_id}/{audio_filename}"
+                    audio_url = f"/cache/{character_id}/{story_id}/{audio_filename}"
                     generated_pages.append({
                         "page": page.page,
                         "text": page.text,
@@ -1215,7 +1216,7 @@ async def pregenerate_story_pages_audio(story_id: str, character_id: str = Form(
                     backend="soundfile"
                 )
                 
-                audio_url = f"/outputs/stories/{story_id}/{audio_filename}"
+                audio_url = f"/cache/{character_id}/{story_id}/{audio_filename}"
                 generated_pages.append({
                     "page": page.page,
                     "text": page.text,
@@ -1250,6 +1251,64 @@ async def pregenerate_story_pages_audio(story_id: str, character_id: str = Form(
     except Exception as e:
         print(f"❌ Error pregenerating story audio: {e}")
         raise HTTPException(status_code=500, detail=f"오디오 생성 중 오류: {str(e)}")
+
+@app.get("/stories/{story_id}/check-audio")
+async def check_story_audio_files(story_id: str, character_id: str = Query(...)):
+    """
+    동화의 페이지별 오디오 파일이 이미 생성되어 있는지 확인
+    
+    Args:
+        story_id: 동화 ID
+        character_id: 캐릭터 ID (쿼리 파라미터)
+        
+    Returns:
+        생성된 오디오 파일 목록
+    """
+    try:
+        from bson import ObjectId
+        if not MONGODB_AVAILABLE or mongodb_db is None:
+            raise HTTPException(status_code=500, detail="MongoDB가 연결되지 않았습니다.")
+        
+        stories_collection = mongodb_db["texts"]
+        
+        story_doc = stories_collection.find_one({"_id": ObjectId(story_id)})
+        if not story_doc:
+            raise HTTPException(status_code=404, detail="Story not found")
+        
+        # 동화 텍스트를 페이지로 나누기
+        content = story_doc.get("content", "")
+        pages = split_story_into_pages(content)
+        
+        # 캐릭터별, 스토리별 캐시 디렉토리 확인 (실제 저장 경로: cache/{character_id}/{story_id}/page_X.wav)
+        cache_dir = CACHE_DIR / character_id / story_id
+        existing_audio = []
+        
+        for page in pages:
+            audio_filename = f"page_{page.page}.wav"
+            audio_path = cache_dir / audio_filename
+            
+            if audio_path.exists():
+                audio_url = f"/cache/{character_id}/{story_id}/{audio_filename}"
+                existing_audio.append({
+                    "page": page.page,
+                    "text": page.text,
+                    "audio_url": audio_url
+                })
+        
+        return {
+            "story_id": story_id,
+            "character_id": character_id,
+            "total_pages": len(pages),
+            "existing_audio_count": len(existing_audio),
+            "existing_audio": existing_audio,
+            "all_audio_exists": len(existing_audio) == len(pages)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error checking story audio: {e}")
+        raise HTTPException(status_code=500, detail=f"오디오 확인 중 오류: {str(e)}")
 
 @app.get("/outputs/stories/{story_id}/{filename}")
 async def get_story_page_audio(story_id: str, filename: str):
