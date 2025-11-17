@@ -194,6 +194,25 @@ def generate_character_id(name: str) -> str:
     unique_string = f"{name}_{timestamp}"
     return hashlib.md5(unique_string.encode()).hexdigest()[:12]
 
+def format_datetime_to_string(dt) -> Optional[str]:
+    """
+    datetime 객체를 ISO 형식 문자열로 변환
+    
+    Args:
+        dt: datetime 객체 또는 None
+        
+    Returns:
+        ISO 형식 문자열 또는 None
+    """
+    if dt is None:
+        return None
+    if isinstance(dt, datetime):
+        return dt.isoformat()
+    if isinstance(dt, str):
+        return dt
+    # 다른 타입이면 문자열로 변환 시도
+    return str(dt)
+
 def split_story_into_pages(text: str, max_chars_per_page: int = 200) -> List[StoryPage]:
     """
     동화 텍스트를 페이지로 나누기
@@ -952,6 +971,10 @@ async def list_stories(limit: int = 5):
             # 페이지로 나누기 (문장 단위)
             pages = split_story_into_pages(content)
             
+            # created_at 필드 처리 (datetime 객체를 문자열로 변환)
+            created_at_raw = story_doc.get("uploadedAt") or story_doc.get("created_at")
+            created_at_str = format_datetime_to_string(created_at_raw)
+            
             story_info = StoryInfo(
                 id=str(story_doc.get("_id", "")),
                 title=title,
@@ -959,7 +982,7 @@ async def list_stories(limit: int = 5):
                 pages=pages,  # 페이지별로 나눈 텍스트
                 audio_url=story_doc.get("audio_url"),
                 character_id=story_doc.get("character_id"),
-                created_at=story_doc.get("uploadedAt") or story_doc.get("created_at")
+                created_at=created_at_str
             )
             stories_list.append(story_info)
         
@@ -1005,6 +1028,10 @@ async def get_story(story_id: str):
         content = story_doc.get("content", "")
         pages = split_story_into_pages(content)
         
+        # created_at 필드 처리 (datetime 객체를 문자열로 변환)
+        created_at_raw = story_doc.get("uploadedAt") or story_doc.get("created_at")
+        created_at_str = format_datetime_to_string(created_at_raw)
+        
         return StoryInfo(
             id=str(story_doc.get("_id", "")),
             title=title,
@@ -1012,7 +1039,7 @@ async def get_story(story_id: str):
             pages=pages,
             audio_url=story_doc.get("audio_url"),
             character_id=story_doc.get("character_id"),
-            created_at=story_doc.get("uploadedAt") or story_doc.get("created_at")
+            created_at=created_at_str
         )
         
     except HTTPException:
