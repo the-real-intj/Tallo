@@ -79,9 +79,196 @@ export async function getCharacterStatus(characterId: string) {
 
 /**
  * ==========================================
- * 동화 API
+ * 동화 API (MongoDB)
  * ==========================================
  */
+
+/**
+ * MongoDB에서 동화 목록 조회
+ * GET /stories/list?limit=5
+ */
+export interface StoryPageInfo {
+  page: number;
+  text: string;
+  audio_url?: string;
+}
+
+export interface StoryInfo {
+  id: string;
+  title: string;
+  text: string;
+  pages?: StoryPageInfo[];  // 페이지별로 나눈 텍스트와 오디오
+  audio_url?: string;
+  character_id?: string;
+  created_at?: string;
+}
+
+export interface StoryListResponse {
+  stories: StoryInfo[];
+  total: number;
+}
+
+export async function fetchStories(limit: number = 5): Promise<StoryListResponse> {
+  try {
+    const response = await apiClient.get('/stories/list', {
+      params: { limit }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('[API] fetchStories 에러:', error);
+    throw error;
+  }
+}
+
+/**
+ * 특정 동화 조회 (MongoDB)
+ * GET /stories/{story_id}
+ */
+export async function getStoryById(storyId: string): Promise<StoryInfo> {
+  try {
+    const response = await apiClient.get(`/stories/${storyId}`);
+    return response.data;
+  } catch (error) {
+    console.error('[API] getStoryById 에러:', error);
+    throw error;
+  }
+}
+
+/**
+ * 동화 오디오 재생
+ * GET /stories/{story_id}/audio
+ */
+export async function getStoryAudio(storyId: string): Promise<Blob> {
+  try {
+    const response = await apiClient.get(`/stories/${storyId}/audio`, {
+      responseType: 'blob'
+    });
+    return response.data;
+  } catch (error) {
+    console.error('[API] getStoryAudio 에러:', error);
+    throw error;
+  }
+}
+
+/**
+ * 동화 페이지별 오디오 미리 생성
+ * POST /stories/{story_id}/pregenerate-audio
+ */
+export async function pregenerateStoryPagesAudio(
+  storyId: string,
+  characterId: string
+): Promise<{
+  story_id: string;
+  character_id: string;
+  total_pages: number;
+  generated_pages: Array<{
+    page: number;
+    text: string;
+    audio_url?: string;
+    error?: string;
+  }>;
+}> {
+  try {
+    const formData = new FormData();
+    formData.append('character_id', characterId);
+    
+    const response = await apiClient.post(
+      `/stories/${storyId}/pregenerate-audio`,
+      formData,
+      {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      }
+    );
+    return response.data;
+  } catch (error) {
+    console.error('[API] pregenerateStoryPagesAudio 에러:', error);
+    throw error;
+  }
+}
+
+/**
+ * ==========================================
+ * LLM API
+ * ==========================================
+ */
+
+/**
+ * LLM 채팅 (텍스트만)
+ * POST /llm/chat
+ */
+export interface LLMChatRequest {
+  message: string;
+  character_id?: string;
+  character_name?: string;
+  system_prompt?: string;
+  return_audio?: boolean;
+}
+
+export interface LLMChatResponse {
+  text: string;
+  audio_url?: string;
+}
+
+export async function chatWithLLM(request: LLMChatRequest): Promise<LLMChatResponse> {
+  try {
+    const response = await apiClient.post('/llm/chat', {
+      ...request,
+      return_audio: false,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('[API] chatWithLLM 에러:', error);
+    throw error;
+  }
+}
+
+/**
+ * LLM 채팅 + TTS 통합
+ * POST /llm/chat
+ */
+export async function chatWithLLMAndTTS(request: LLMChatRequest): Promise<LLMChatResponse> {
+  try {
+    const response = await apiClient.post('/llm/chat', {
+      ...request,
+      return_audio: true,
+    });
+    return response.data;
+  } catch (error) {
+    console.error('[API] chatWithLLMAndTTS 에러:', error);
+    throw error;
+  }
+}
+
+/**
+ * ==========================================
+ * TTS API
+ * ==========================================
+ */
+
+/**
+ * TTS 생성
+ * POST /tts/generate
+ */
+export interface TTSRequest {
+  text: string;
+  character_id: string;
+  language?: string;
+  speaking_rate?: number;
+  pitch?: number;
+  emotion?: string;
+}
+
+export async function synthesizeTTS(request: TTSRequest): Promise<Blob> {
+  try {
+    const response = await apiClient.post('/tts/generate', request, {
+      responseType: 'blob',
+    });
+    return response.data;
+  } catch (error) {
+    console.error('[API] synthesizeTTS 에러:', error);
+    throw error;
+  }
+}
 
 /**
  * 키워드 기반 동화 생성
@@ -94,36 +281,8 @@ export async function createStory(data: {
   ageGroup: string;
 }): Promise<StoryResponse> {
   // TODO: 실제 API 호출로 변경
-   const response = await apiClient.post('/api/stories', data);
-   return response.data;
-  
-  console.warn('[API] createStory: 더미 응답 반환. 백엔드 연동 필요');
-  return Promise.resolve({
-    id: `story_${Date.now()}`,
-    title: '마법의 모험',
-    type: 'interactive',
-    script: [],
-    choices: [],
-  });
-}
-
-/**
- * 동화 상세 조회
- * TODO: 백엔드 FastAPI 엔드포인트 연동
- * GET /api/stories/:id
- */
-export async function getStory(storyId: string): Promise<StoryResponse> {
-  // TODO: 실제 API 호출로 변경
-  // const response = await apiClient.get(`/api/stories/${storyId}`);
-  // return response.data;
-  
-  console.warn('[API] getStory: 더미 응답 반환. 백엔드 연동 필요');
-  return Promise.resolve({
-    id: storyId,
-    title: '마법의 모험',
-    type: 'interactive',
-    script: [],
-  });
+  const response = await apiClient.post('/api/stories', data);
+  return response.data;
 }
 
 /**

@@ -9,6 +9,7 @@ import { AppState, Character, Emotion } from '@/types';
  */
 export const useAppStore = create<AppState>((set) => ({
   selectedCharacter: null,
+  selectedStory: null,
   currentPage: 1,
   messages: [],
   isPlaying: false,
@@ -17,6 +18,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   setSelectedCharacter: (character) =>
     set({ selectedCharacter: character }),
+
+  setSelectedStory: (story) =>
+    set({ selectedStory: story }),
 
   setCurrentPage: (page) =>
     set({ currentPage: page }),

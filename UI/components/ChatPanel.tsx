@@ -10,15 +10,18 @@ interface ChatPanelProps {
   messages: Message[];
   isVoiceEnabled: boolean;
   onClose: () => void;
+  onSendMessage?: (text: string) => void; // 메시지 전송 핸들러
 }
 
 /**
  * 채팅 패널 컴포넌트
  * 캐릭터와의 대화를 표시
  */
-export function ChatPanel({ character, messages, isVoiceEnabled, onClose }: ChatPanelProps) {
+export function ChatPanel({ character, messages, isVoiceEnabled, onClose, onSendMessage }: ChatPanelProps) {
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
+  const [inputText, setInputText] = useState('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const lastProcessedMessageIdRef = useRef<number>(-1);
 
@@ -141,6 +144,42 @@ export function ChatPanel({ character, messages, isVoiceEnabled, onClose }: Chat
         ))}
         <div ref={chatEndRef} />
       </div>
+
+      {/* 입력 필드 */}
+      {onSendMessage && (
+        <div className="p-4 border-t-2 border-gray-200 bg-gray-50">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (inputText.trim()) {
+                // 스토리 오디오 정지
+                if ((window as any).stopStoryAudio) {
+                  (window as any).stopStoryAudio();
+                }
+                onSendMessage(inputText.trim());
+                setInputText('');
+              }
+            }}
+            className="flex gap-2"
+          >
+            <input
+              ref={inputRef}
+              type="text"
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder="메시지를 입력하세요..."
+              className="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-purple-500"
+            />
+            <button
+              type="submit"
+              disabled={!inputText.trim()}
+              className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              전송
+            </button>
+          </form>
+        </div>
+      )}
     </>
   );
 }
