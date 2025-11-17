@@ -213,13 +213,13 @@ def format_datetime_to_string(dt) -> Optional[str]:
     # 다른 타입이면 문자열로 변환 시도
     return str(dt)
 
-def split_story_into_pages(text: str, max_chars_per_page: int = 200) -> List[StoryPage]:
+def split_story_into_pages(text: str, sentences_per_page: int = 2) -> List[StoryPage]:
     """
-    동화 텍스트를 페이지로 나누기
+    동화 텍스트를 페이지로 나누기 (1-2문장씩)
     
     Args:
         text: 전체 동화 텍스트
-        max_chars_per_page: 페이지당 최대 문자 수 (기본값: 200)
+        sentences_per_page: 페이지당 문장 수 (기본값: 2)
         
     Returns:
         List[StoryPage]: 페이지별로 나눈 텍스트 리스트
@@ -229,42 +229,43 @@ def split_story_into_pages(text: str, max_chars_per_page: int = 200) -> List[Sto
     
     # 문장 단위로 나누기 (마침표, 물음표, 느낌표 기준)
     import re
+    # 문장 끝 구분자(마침표, 물음표, 느낌표)를 포함하여 분리
     sentences = re.split(r'([.!?。！？]\s*)', text)
     
-    # 문장들을 합치면서 페이지 구성
+    # 문장과 구분자를 합쳐서 완전한 문장 만들기
+    complete_sentences = []
+    i = 0
+    while i < len(sentences):
+        if i + 1 < len(sentences):
+            # 문장 + 구분자 합치기
+            complete_sentence = (sentences[i] + sentences[i + 1]).strip()
+            if complete_sentence:  # 빈 문장 제외
+                complete_sentences.append(complete_sentence)
+            i += 2
+        else:
+            # 마지막 문장 (구분자 없을 수 있음)
+            if sentences[i].strip():
+                complete_sentences.append(sentences[i].strip())
+            i += 1
+    
+    # 1-2문장씩 페이지로 구성
     pages = []
-    current_page_text = ""
     current_page_num = 1
     
     i = 0
-    while i < len(sentences):
-        sentence = sentences[i]
-        if i + 1 < len(sentences):
-            sentence += sentences[i + 1]  # 구분자 포함
-            i += 2
-        else:
-            i += 1
+    while i < len(complete_sentences):
+        # 1-2문장을 한 페이지에 넣기
+        page_sentences = complete_sentences[i:i + sentences_per_page]
+        page_text = " ".join(page_sentences)
         
-        # 현재 페이지에 문장 추가 시 길이 체크
-        if len(current_page_text) + len(sentence) > max_chars_per_page and current_page_text:
-            # 현재 페이지 저장
-            pages.append(StoryPage(
-                page=current_page_num,
-                text=current_page_text.strip(),
-                audio_url=None  # 나중에 오디오 생성 시 업데이트
-            ))
-            current_page_text = sentence
-            current_page_num += 1
-        else:
-            current_page_text += sentence
-    
-    # 마지막 페이지 추가
-    if current_page_text.strip():
         pages.append(StoryPage(
             page=current_page_num,
-            text=current_page_text.strip(),
-            audio_url=None
+            text=page_text,
+            audio_url=None  # 나중에 오디오 생성 시 업데이트
         ))
+        
+        i += sentences_per_page
+        current_page_num += 1
     
     return pages
 
@@ -1116,7 +1117,7 @@ async def story_chat(story_id: str, request: LLMChatRequest):
     return await chat_with_llm(request)
 
 @app.post("/stories/{story_id}/pregenerate-audio")
-async def pregenerate_story_pages_audio(story_id: str, character_id: str):
+async def pregenerate_story_pages_audio(story_id: str, character_id: str = Form(...)):
     """
     동화의 모든 페이지에 대한 오디오를 미리 생성
     

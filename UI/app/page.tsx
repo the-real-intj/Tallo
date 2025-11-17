@@ -212,9 +212,29 @@ export default function HomePage() {
                   
                   // 오디오 재생 (audio_url이 있으면)
                   if (response.audio_url) {
-                    const audioUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${response.audio_url}`;
-                    const audio = new Audio(audioUrl);
-                    await audio.play();
+                    try {
+                      // 상대 경로면 API URL 추가
+                      let audioUrl: string;
+                      if (response.audio_url.startsWith('/')) {
+                        audioUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${response.audio_url}`;
+                      } else if (response.audio_url.startsWith('http')) {
+                        audioUrl = response.audio_url;
+                      } else {
+                        audioUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/${response.audio_url}`;
+                      }
+                      
+                      const audio = new Audio(audioUrl);
+                      
+                      // 오디오 로드 및 재생
+                      audio.onerror = (e) => {
+                        console.error('오디오 재생 실패:', e, audioUrl);
+                      };
+                      
+                      await audio.play();
+                      console.log('🔊 LLM TTS 재생 중:', audioUrl);
+                    } catch (audioError) {
+                      console.error('오디오 재생 중 오류:', audioError);
+                    }
                   }
                 } catch (error) {
                   console.error('LLM 채팅 에러:', error);
