@@ -49,7 +49,7 @@ app.add_middleware(
 
 # 디렉토리 설정
 BASE_DIR = Path(__file__).parent.parent
-EMBEDDINGS_DIR = BASE_DIR / "embeddings"
+EMBEDDINGS_DIR = BASE_DIR / "service" / "embeddings"
 REFERENCE_DIR = BASE_DIR / "audios"
 OUTPUTS_DIR = BASE_DIR / "outputs"
 CACHE_DIR = BASE_DIR / "cache"
