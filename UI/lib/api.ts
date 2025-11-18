@@ -31,8 +31,15 @@ const apiClient = axios.create({
  * GET /characters
  */
 export async function fetchCharacters(): Promise<CharacterResponse[]> {
-  const response = await apiClient.get('/characters');
-  return response.data;
+  try {
+    console.log('[API] Fetching characters from:', API_BASE_URL);
+    const response = await apiClient.get('/characters');
+    console.log('[API] Characters response:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('[API] fetchCharacters error:', error);
+    throw error;
+  }
 }
 
 /**
