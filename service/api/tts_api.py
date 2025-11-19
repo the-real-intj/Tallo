@@ -65,8 +65,8 @@ app.add_middleware(
 )
 
 # 디렉토리 설정 (이미 위에서 정의됨)
-EMBEDDINGS_DIR = BASE_DIR / "service" / "embeddings"
-REFERENCE_DIR = BASE_DIR / "audios"
+EMBEDDINGS_DIR = BASE_DIR / "embeddings"
+REFERENCE_DIR = BASE_DIR / "audio"
 OUTPUTS_DIR = BASE_DIR / "outputs"
 CACHE_DIR = BASE_DIR / "cache"
 
@@ -327,7 +327,7 @@ async def startup_event():
         print("\n🗄️ Connecting to MongoDB...")
         try:
             mongodb_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
-            mongodb_db_name = os.getenv("MONGODB_DB_NAME", "tallo")
+            mongodb_db_name = os.getenv("MONGODB_DB_NAME", "story_book")
             
             mongodb_client = MongoClient(mongodb_uri)
             # 연결 테스트

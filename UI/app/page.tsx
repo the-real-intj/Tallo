@@ -172,7 +172,7 @@ export default function HomePage() {
   return (
     <div className="h-screen flex bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 overflow-hidden">
       {/* 좌측 패널: 캐릭터 선택 + 채팅 */}
-      <div className="w-96 bg-white shadow-2xl flex flex-col">
+      <div className="w-[500px] bg-white shadow-2xl flex flex-col">
         {/* 헤더 */}
         <div className="bg-gradient-to-r from-purple-500 to-pink-500 p-6 text-white">
           <h1 className="text-2xl font-bold mb-2">✨ 마법 동화나라</h1>
@@ -294,7 +294,7 @@ export default function HomePage() {
 
       {/* 우측 패널: 스토리 선택 또는 동화책 뷰어 */}
       {!selectedStory ? (
-        <div className="w-96 bg-white shadow-2xl flex flex-col">
+        <div className="w-[500px] bg-white shadow-2xl flex flex-col">
           <div className="bg-gradient-to-r from-blue-500 to-cyan-500 p-6 text-white">
             <h2 className="text-xl font-bold mb-1">📚 동화 선택</h2>
             <p className="text-sm opacity-90">읽고 싶은 동화를 선택하세요</p>
