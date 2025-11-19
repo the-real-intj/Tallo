@@ -82,16 +82,29 @@ export default function HomePage() {
       return;
     }
 
+    // 시작 메시지 먼저 출력
+    addMessage('character', `${selectedStory.title} 이야기를 시작할게!`);
+    
+    // 약간의 딜레이 후 재생 시작
+    await delay(1000);
+    
     // MongoDB 스토리 재생
     setIsPlaying(true);
     setCurrentPage(1);
     setCurrentEmotion('happy');
     
-    addMessage('character', `${selectedStory.title} 이야기를 시작할게!`);
+    console.log('🎬 동화 재생 시작:', {
+      title: selectedStory.title,
+      pages: selectedStory.pages?.length || 0,
+      isVoiceEnabled,
+      characterVoice: selectedCharacter.voice
+    });
     
     // 페이지별 오디오가 없으면 미리 생성
     if (selectedStory.pages && selectedStory.pages.length > 0) {
       const hasAudio = selectedStory.pages.some(p => p.audio_url);
+      console.log('📋 오디오 상태:', { hasAudio, isVoiceEnabled });
+      
       if (!hasAudio && isVoiceEnabled) {
         try {
           addMessage('character', '오디오를 준비하고 있어요...');
@@ -107,6 +120,7 @@ export default function HomePage() {
                 : page;
             });
             setSelectedStory({ ...selectedStory, pages: updatedPages });
+            console.log('✅ 오디오 URL 업데이트 완료:', updatedPages.map(p => ({ page: p.page, hasAudio: !!p.audio_url })));
           }
         } catch (error) {
           console.error('오디오 생성 실패:', error);
