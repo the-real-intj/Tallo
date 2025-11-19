@@ -18,12 +18,23 @@ class CharacterRepository:
         """모든 캐릭터 조회"""
         cursor = self.collection.find()
         characters = await cursor.to_list(length=100)
-        return [CharacterDB(**char) for char in characters]
+        result = []
+        for char in characters:
+            # ObjectId를 문자열로 변환
+            if "_id" in char and isinstance(char["_id"], ObjectId):
+                char["_id"] = str(char["_id"])
+            result.append(CharacterDB(**char))
+        return result
     
     async def get_by_id(self, character_id: str) -> Optional[CharacterDB]:
         """캐릭터 ID로 조회"""
         char = await self.collection.find_one({"character_id": character_id})
-        return CharacterDB(**char) if char else None
+        if char:
+            # ObjectId를 문자열로 변환
+            if "_id" in char and isinstance(char["_id"], ObjectId):
+                char["_id"] = str(char["_id"])
+            return CharacterDB(**char)
+        return None
     
     async def save_embedding(self, character_id: str, embedding: torch.Tensor) -> str:
         """임베딩을 GridFS에 저장"""
@@ -60,12 +71,23 @@ class StorybookRepository:
         """모든 동화책 조회"""
         cursor = self.collection.find()
         stories = await cursor.to_list(length=100)
-        return [StorybookDB(**story) for story in stories]
+        result = []
+        for story in stories:
+            # ObjectId를 문자열로 변환
+            if "_id" in story and isinstance(story["_id"], ObjectId):
+                story["_id"] = str(story["_id"])
+            result.append(StorybookDB(**story))
+        return result
     
     async def get_by_id(self, story_id: str) -> Optional[StorybookDB]:
         """동화책 ID로 조회"""
         story = await self.collection.find_one({"_id": ObjectId(story_id)})
-        return StorybookDB(**story) if story else None
+        if story:
+            # ObjectId를 문자열로 변환
+            if "_id" in story and isinstance(story["_id"], ObjectId):
+                story["_id"] = str(story["_id"])
+            return StorybookDB(**story)
+        return None
     
     def chunk_text(self, text: str, lines_per_chunk: int = 4) -> List[str]:
         """텍스트를 4-5줄 단위로 분할"""
@@ -105,7 +127,12 @@ class AudioCacheRepository:
             "story_id": story_id,
             "chunk_index": chunk_index
         })
-        return AudioCacheDB(**cache) if cache else None
+        if cache:
+            # ObjectId를 문자열로 변환
+            if "_id" in cache and isinstance(cache["_id"], ObjectId):
+                cache["_id"] = str(cache["_id"])
+            return AudioCacheDB(**cache)
+        return None
     
     async def find_cache_by_page(self, character_id: str, story_id: str, page_num: int) -> Optional[AudioCacheDB]:
         """페이지 번호로 캐시 찾기"""
@@ -114,7 +141,12 @@ class AudioCacheRepository:
             "story_id": story_id,
             "chunk_index": page_num
         })
-        return AudioCacheDB(**cache) if cache else None
+        if cache:
+            # ObjectId를 문자열로 변환
+            if "_id" in cache and isinstance(cache["_id"], ObjectId):
+                cache["_id"] = str(cache["_id"])
+            return AudioCacheDB(**cache)
+        return None
     
     async def save_cache(self, cache: AudioCacheDB) -> str:
         """오디오 캐시 메타데이터 저장"""

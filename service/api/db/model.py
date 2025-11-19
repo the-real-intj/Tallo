@@ -6,20 +6,9 @@ from typing import Optional, List, Dict
 from datetime import datetime
 from bson import ObjectId
 
-class PyObjectId(ObjectId):
-    @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
-
-    @classmethod
-    def validate(cls, v):
-        if not ObjectId.is_valid(v):
-            raise ValueError("Invalid ObjectId")
-        return ObjectId(v)
-
 class CharacterDB(BaseModel):
     """캐릭터 MongoDB 문서"""
-    id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
+    id: Optional[str] = Field(None, alias="_id")
     character_id: str
     name: str
     description: Optional[str] = None
@@ -34,7 +23,7 @@ class CharacterDB(BaseModel):
 
 class StorybookDB(BaseModel):
     """동화책 MongoDB 문서 (기존 texts 컬렉션 호환)"""
-    id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
+    id: Optional[str] = Field(None, alias="_id")
     filename: str
     content: str
     uploadedAt: datetime
@@ -50,7 +39,7 @@ class StorybookDB(BaseModel):
 
 class AudioCacheDB(BaseModel):
     """오디오 캐시 문서"""
-    id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
+    id: Optional[str] = Field(None, alias="_id")
     character_id: str
     story_id: str
     chunk_index: int

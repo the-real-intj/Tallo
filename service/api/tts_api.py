@@ -953,7 +953,12 @@ async def list_stories(limit: int = 5):
         
         # 최대 5개로 제한 (최신순 정렬)
         limit = min(limit, 5)
-        sorted_stories = sorted(all_stories, key=lambda x: x.id, reverse=True)[:limit]
+        # id가 None이 아닌 경우에만 정렬 (ObjectId 문자열은 시간순 정렬 가능)
+        sorted_stories = sorted(
+            [s for s in all_stories if s.id], 
+            key=lambda x: x.id, 
+            reverse=True
+        )[:limit]
         
         # StorybookDB를 StoryInfo로 변환
         stories_list = [storybookdb_to_storyinfo(story_db) for story_db in sorted_stories]
