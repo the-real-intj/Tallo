@@ -189,13 +189,27 @@ def load_character_embedding(character_id: str) -> torch.Tensor:
             import io
 
             characters_collection = mongodb_db["characters"]
-            char_doc = characters_collection.find_one({"character_id": character_id})
+            # character_id 또는 id 필드로 검색
+            char_doc = characters_collection.find_one({
+                "$or": [
+                    {"character_id": character_id},
+                    {"id": character_id},
+                    {"_id": ObjectId(character_id) if len(character_id) == 24 else None}
+                ]
+            })
 
             if char_doc and "embedding" in char_doc:
                 # MongoDB에서 바이너리 임베딩 로드
-                embedding_bytes = char_doc["embedding"]
+                embedding_data = char_doc["embedding"]
+                
+                # Binary 타입이면 bytes로 변환
+                if isinstance(embedding_data, Binary):
+                    embedding_bytes = bytes(embedding_data)
+                else:
+                    embedding_bytes = embedding_data
+                
                 buffer = io.BytesIO(embedding_bytes)
-                embedding = torch.load(buffer, map_location=device)
+                embedding = torch.load(buffer, map_location=device, weights_only=False)
                 print(f"✅ Loaded embedding from MongoDB: {character_id}")
                 return embedding
         except Exception as e:
@@ -316,13 +330,7 @@ async def startup_event():
         print(f"❌ Failed to load model: {e}")
         raise
     
-    print("\n📚 Loading characters database...")
-    print(f"📂 Characters DB path: {CHARACTERS_DB}")
-    load_characters_db()
-    print(f"✅ Loaded {len(characters_db)} characters")
-    print(f"📋 Character IDs: {list(characters_db.keys())}")
-    
-    # MongoDB 연결
+    # MongoDB 연결 먼저 수행
     if MONGODB_AVAILABLE:
         print("\n🗄️ Connecting to MongoDB...")
         try:
@@ -346,6 +354,44 @@ async def startup_event():
             mongodb_db = None
     else:
         print("\n⚠️ MongoDB not available (pymongo not installed)")
+    
+    print("\n📚 Loading characters database...")
+    print(f"📂 Characters DB path: {CHARACTERS_DB}")
+    
+    # MongoDB에서 캐릭터 로드 시도
+    if MONGODB_AVAILABLE and mongodb_db is not None:
+        try:
+            characters_collection = mongodb_db["characters"]
+            characters_cursor = characters_collection.find()
+            
+            mongodb_characters = {}
+            for char_doc in characters_cursor:
+                character_id = char_doc.get("character_id") or char_doc.get("id") or str(char_doc.get("_id"))
+                mongodb_characters[character_id] = {
+                    "id": character_id,
+                    "name": char_doc.get("name", "Unknown"),
+                    "description": char_doc.get("description", ""),
+                    "language": char_doc.get("language", "ko"),
+                    "created_at": format_datetime_to_string(char_doc.get("created_at")),
+                    "reference_audio": char_doc.get("reference_audio_path", "")
+                }
+            
+            if mongodb_characters:
+                print(f"✅ Loaded {len(mongodb_characters)} characters from MongoDB")
+                characters_db.update(mongodb_characters)
+            else:
+                print("⚠️ No characters found in MongoDB, loading from local file...")
+                load_characters_db()
+        except Exception as e:
+            print(f"⚠️ Failed to load characters from MongoDB: {e}")
+            print("⚠️ Loading from local file...")
+            load_characters_db()
+    else:
+        # MongoDB 없으면 로컬 파일에서 로드
+        load_characters_db()
+    
+    print(f"✅ Total characters loaded: {len(characters_db)}")
+    print(f"📋 Character IDs: {list(characters_db.keys())}")
     
     print("\n" + "=" * 60)
     print("✨ Server is ready!")
