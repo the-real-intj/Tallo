@@ -14,7 +14,7 @@ export const useAppStore = create<AppState>((set) => ({
   messages: [],
   isPlaying: false,
   currentEmotion: 'neutral',
-  isVoiceEnabled: false,
+  isVoiceEnabled: true,  // 기본값을 true로 변경 (동화 시작 시 음성 자동 활성화)
 
   setSelectedCharacter: (character) =>
     set({ selectedCharacter: character }),
