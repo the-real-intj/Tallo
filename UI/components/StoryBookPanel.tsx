@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { StoryPage, Character } from '@/types';
 import { cn } from '@/lib/utils';
 import { pregenerateStoryAudio, type PreGenerateResponse } from '@/lib/api';
+import { API_BASE_URL } from '@/lib/api';
 
 interface StoryBookPanelProps {
   currentPage: StoryPage | null;
@@ -68,7 +69,12 @@ export function StoryBookPanel({
         const urls: Record<number, string> = {};
         result.pages.forEach(page => {
           if (page.audio_url) {
-            urls[page.page] = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${page.audio_url}`;
+            // 상대 경로면 API URL 추가
+            if (page.audio_url.startsWith('/')) {
+              urls[page.page] = `${API_BASE_URL}${page.audio_url}`;
+            } else {
+              urls[page.page] = page.audio_url;
+            }
           }
         });
 
@@ -112,7 +118,7 @@ export function StoryBookPanel({
         if (currentPage.audio_url) {
           // 상대 경로면 API URL 추가
           if (currentPage.audio_url.startsWith('/')) {
-            audioUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}${currentPage.audio_url}`;
+            audioUrl = `${API_BASE_URL}${currentPage.audio_url}`;
           } else {
             audioUrl = currentPage.audio_url;
           }

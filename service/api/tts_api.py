@@ -831,13 +831,32 @@ async def get_cached_audio_from_gridfs(file_id: str):
         raise HTTPException(status_code=503, detail="MongoDB not available")
     
     try:
+        print(f"🔍 Loading audio from GridFS: {file_id}")
         audio_bytes = await audio_cache_repo.load_audio_from_gridfs(file_id)
+        
+        if not audio_bytes or len(audio_bytes) == 0:
+            print(f"❌ Audio file is empty: {file_id}")
+            raise HTTPException(status_code=404, detail="Audio file is empty")
+        
+        print(f"✅ Audio loaded successfully: {len(audio_bytes)} bytes")
         return StreamingResponse(
             io.BytesIO(audio_bytes),
             media_type="audio/wav",
-            headers={"Content-Disposition": f'attachment; filename="audio_{file_id}.wav"'}
+            headers={
+                "Content-Type": "audio/wav",
+                "Content-Length": str(len(audio_bytes)),
+                "Accept-Ranges": "bytes",
+                # Content-Disposition을 inline으로 변경 (다운로드 대신 재생)
+                "Content-Disposition": f'inline; filename="audio_{file_id}.wav"'
+            }
         )
+    except ValueError as e:
+        print(f"❌ Invalid file_id format: {file_id}, error: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid file_id format: {str(e)}")
     except Exception as e:
+        print(f"❌ Error loading audio: {file_id}, error: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=404, detail=f"Audio not found: {str(e)}")
 
 # ==================== LLM API 엔드포인트 ====================

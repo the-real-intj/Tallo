@@ -328,6 +328,7 @@ export default function HomePage() {
             choices: null,
             audio_url: p.audio_url,
           })) || []}
+          storyId={selectedStory?.id}  // 스토리 ID 전달
           onNext={handleNextPage}
           onPrevious={handlePreviousPage}
         />
