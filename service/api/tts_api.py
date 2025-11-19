@@ -65,7 +65,7 @@ app.add_middleware(
 )
 
 # 디렉토리 설정 (이미 위에서 정의됨)
-EMBEDDINGS_DIR = BASE_DIR / "service" / "embeddings"
+EMBEDDINGS_DIR = BASE_DIR / "embeddings"
 REFERENCE_DIR = BASE_DIR / "audios"
 OUTPUTS_DIR = BASE_DIR / "outputs"
 CACHE_DIR = BASE_DIR / "cache"
@@ -176,53 +176,13 @@ def get_embedding_path(character_id: str) -> Path:
     return EMBEDDINGS_DIR / f"{character_id}.pt"
 
 def load_character_embedding(character_id: str) -> torch.Tensor:
-    """
-    캐릭터 임베딩 로드 (MongoDB 우선, 로컬 폴백)
-
-    1. MongoDB에서 임베딩 조회 시도
-    2. 없으면 로컬 .pt 파일에서 로드
-    """
-    # MongoDB에서 임베딩 로드 시도
-    if MONGODB_AVAILABLE and mongodb_db is not None:
-        try:
-            from bson import ObjectId, Binary
-            import io
-
-            characters_collection = mongodb_db["characters"]
-            # character_id 또는 id 필드로 검색
-            char_doc = characters_collection.find_one({
-                "$or": [
-                    {"character_id": character_id},
-                    {"id": character_id},
-                    {"_id": ObjectId(character_id) if len(character_id) == 24 else None}
-                ]
-            })
-
-            if char_doc and "embedding" in char_doc:
-                # MongoDB에서 바이너리 임베딩 로드
-                embedding_data = char_doc["embedding"]
-                
-                # Binary 타입이면 bytes로 변환
-                if isinstance(embedding_data, Binary):
-                    embedding_bytes = bytes(embedding_data)
-                else:
-                    embedding_bytes = embedding_data
-                
-                buffer = io.BytesIO(embedding_bytes)
-                embedding = torch.load(buffer, map_location=device, weights_only=False)
-                print(f"✅ Loaded embedding from MongoDB: {character_id}")
-                return embedding
-        except Exception as e:
-            print(f"⚠️ Failed to load from MongoDB: {e}, trying local file...")
-
-    # 로컬 파일에서 로드 (폴백)
+    """캐릭터 임베딩 로드"""
     embedding_path = get_embedding_path(character_id)
     if not embedding_path.exists():
-        raise HTTPException(status_code=404, detail=f"Character '{character_id}' not found in MongoDB or local storage")
-
+        raise HTTPException(status_code=404, detail=f"Character '{character_id}' not found")
+    
     try:
         embedding = torch.load(embedding_path, map_location=device)
-        print(f"✅ Loaded embedding from local file: {character_id}")
         return embedding
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load embedding: {str(e)}")
@@ -330,7 +290,11 @@ async def startup_event():
         print(f"❌ Failed to load model: {e}")
         raise
     
-    # MongoDB 연결 먼저 수행
+    print("\n📚 Loading characters database...")
+    load_characters_db()
+    print(f"✅ Loaded {len(characters_db)} characters")
+    
+    # MongoDB 연결
     if MONGODB_AVAILABLE:
         print("\n🗄️ Connecting to MongoDB...")
         try:
@@ -355,44 +319,6 @@ async def startup_event():
     else:
         print("\n⚠️ MongoDB not available (pymongo not installed)")
     
-    print("\n📚 Loading characters database...")
-    print(f"📂 Characters DB path: {CHARACTERS_DB}")
-    
-    # MongoDB에서 캐릭터 로드 시도
-    if MONGODB_AVAILABLE and mongodb_db is not None:
-        try:
-            characters_collection = mongodb_db["characters"]
-            characters_cursor = characters_collection.find()
-            
-            mongodb_characters = {}
-            for char_doc in characters_cursor:
-                character_id = char_doc.get("character_id") or char_doc.get("id") or str(char_doc.get("_id"))
-                mongodb_characters[character_id] = {
-                    "id": character_id,
-                    "name": char_doc.get("name", "Unknown"),
-                    "description": char_doc.get("description", ""),
-                    "language": char_doc.get("language", "ko"),
-                    "created_at": format_datetime_to_string(char_doc.get("created_at")),
-                    "reference_audio": char_doc.get("reference_audio_path", "")
-                }
-            
-            if mongodb_characters:
-                print(f"✅ Loaded {len(mongodb_characters)} characters from MongoDB")
-                characters_db.update(mongodb_characters)
-            else:
-                print("⚠️ No characters found in MongoDB, loading from local file...")
-                load_characters_db()
-        except Exception as e:
-            print(f"⚠️ Failed to load characters from MongoDB: {e}")
-            print("⚠️ Loading from local file...")
-            load_characters_db()
-    else:
-        # MongoDB 없으면 로컬 파일에서 로드
-        load_characters_db()
-    
-    print(f"✅ Total characters loaded: {len(characters_db)}")
-    print(f"📋 Character IDs: {list(characters_db.keys())}")
-    
     print("\n" + "=" * 60)
     print("✨ Server is ready!")
     print("📖 API Documentation: {IP주소:port}/docs")
@@ -413,35 +339,11 @@ async def root():
 @app.get("/characters", response_model=List[CharacterInfo])
 async def list_characters():
     """
-    등록된 모든 캐릭터 목록 조회 (MongoDB 우선, 로컬 폴백)
-
+    등록된 모든 캐릭터 목록 조회
+    
     Returns:
         List[CharacterInfo]: 캐릭터 정보 리스트
     """
-    # MongoDB에서 캐릭터 목록 조회 시도
-    if MONGODB_AVAILABLE and mongodb_db is not None:
-        try:
-            characters_collection = mongodb_db["characters"]
-            characters_cursor = characters_collection.find()
-
-            characters_list = []
-            for char_doc in characters_cursor:
-                characters_list.append(CharacterInfo(
-                    id=char_doc.get("character_id", str(char_doc["_id"])),
-                    name=char_doc.get("name", ""),
-                    description=char_doc.get("description"),
-                    language=char_doc.get("language", "ko"),
-                    created_at=format_datetime_to_string(char_doc.get("created_at")),
-                    reference_audio=char_doc.get("reference_audio")
-                ))
-
-            if characters_list:
-                print(f"✅ Loaded {len(characters_list)} characters from MongoDB")
-                return characters_list
-        except Exception as e:
-            print(f"⚠️ Failed to load characters from MongoDB: {e}")
-
-    # 로컬 파일에서 로드 (폴백)
     load_characters_db()
     return [CharacterInfo(**char) for char in characters_db.values()]
 
@@ -498,16 +400,16 @@ async def create_character(
         print("🎤 Extracting speaker embedding...")
         speaker_embedding = model.make_speaker_embedding(wav, sampling_rate)
         
-        # 5. Embedding 저장 (로컬 + MongoDB)
+        # 5. Embedding 저장
         embedding_path = get_embedding_path(character_id)
         torch.save(speaker_embedding, embedding_path)
-        print(f"💾 Saved embedding to local: {embedding_path}")
-
+        print(f"💾 Saved embedding: {embedding_path}")
+        
         # 6. 참조 오디오 저장 (선택적)
         ref_audio_path = REFERENCE_DIR / f"{character_id}.wav"
         torchaudio.save(str(ref_audio_path), wav, sampling_rate, backend="soundfile")
-
-        # 7. 캐릭터 정보 생성
+        
+        # 7. 캐릭터 정보 저장
         character_info = {
             "id": character_id,
             "name": name,
@@ -516,38 +418,10 @@ async def create_character(
             "created_at": datetime.now().isoformat(),
             "reference_audio": str(ref_audio_path.relative_to(BASE_DIR))
         }
-
-        # 8. MongoDB에 임베딩과 캐릭터 정보 저장
-        if MONGODB_AVAILABLE and mongodb_db is not None:
-            try:
-                import io
-                from bson import Binary
-
-                # 임베딩을 바이너리로 변환
-                buffer = io.BytesIO()
-                torch.save(speaker_embedding, buffer)
-                embedding_bytes = buffer.getvalue()
-
-                characters_collection = mongodb_db["characters"]
-                mongo_doc = {
-                    "character_id": character_id,
-                    "name": name,
-                    "description": description,
-                    "language": language,
-                    "created_at": datetime.now(),
-                    "reference_audio": str(ref_audio_path.relative_to(BASE_DIR)),
-                    "embedding": Binary(embedding_bytes),  # 바이너리로 저장
-                }
-
-                characters_collection.insert_one(mongo_doc)
-                print(f"✅ Saved character to MongoDB: {character_id}")
-            except Exception as e:
-                print(f"⚠️ Failed to save to MongoDB: {e}")
-
-        # 9. 로컬 characters.json에도 저장 (폴백)
+        
         characters_db[character_id] = character_info
         save_characters_db()
-
+        
         print(f"✅ Character '{name}' created successfully!")
         return CharacterInfo(**character_info)
         
@@ -1310,25 +1184,26 @@ async def pregenerate_story_pages_audio(story_id: str, character_id: str = Form(
                     text=page.text,
                     speaker=speaker_embedding,
                     language="ko",
-                    speaking_rate=18.0,  # 조금 더 빠르게
+                    speaking_rate=15.0,
                     pitch_std=30.0
                 )
                 conditioning = model.prepare_conditioning(cond_dict)
                 
                 with torch.no_grad():
-                    # 최적화된 토큰 계산
-                    # Zonos: 86 tokens/sec, 한글 1글자 ≈ 0.15초
-                    # 토큰 = 글자 수 * 0.15 * 86 ≈ 글자 수 * 13
                     text_length = len(page.text)
-                    max_tokens = min(text_length * 13 + 100, 800)  # 최대 800으로 제한
-
-                    print(f"📝 Page {page.page}: {text_length} chars → {max_tokens} tokens")
-
-                    # 빠른 샘플링 (min_p로 더 결정적)
+                    if text_length < 20:
+                        max_tokens = 500
+                    elif text_length < 50:
+                        max_tokens = 800
+                    elif text_length < 100:
+                        max_tokens = 1200
+                    else:
+                        max_tokens = 86 * 30
+                    
                     codes = model.generate(
                         conditioning,
                         max_new_tokens=max_tokens,
-                        sampling_params={"min_p": 0.15, "temperature": 0.9}  # 빠르고 자연스럽게
+                        sampling_params={"min_p": 0.1, "temperature": 1.0}
                     )
                     wavs = model.autoencoder.decode(codes).cpu()
                 
