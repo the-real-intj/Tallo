@@ -329,6 +329,7 @@ export default function HomePage() {
             audio_url: p.audio_url,
           })) || []}
           storyId={selectedStory?.id}  // 스토리 ID 전달
+          storyTitle={selectedStory?.title}  // 동화 제목 전달
           onNext={handleNextPage}
           onPrevious={handlePreviousPage}
         />

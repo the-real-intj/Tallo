@@ -3,8 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { StoryPage, Character } from '@/types';
 import { cn } from '@/lib/utils';
-import { pregenerateStoryAudio, type PreGenerateResponse } from '@/lib/api';
-import { API_BASE_URL } from '@/lib/api';
+import { API_BASE_URL, generateQuestion, generateClosingMessage, chatWithLLMAndTTS } from '@/lib/api';
 
 interface StoryBookPanelProps {
   currentPage: StoryPage | null;
@@ -14,6 +13,7 @@ interface StoryBookPanelProps {
   character?: Character | null;
   storyPages?: StoryPage[];  // 전체 동화 페이지 추가
   storyId?: string;  // 스토리 ID (GridFS 캐싱용)
+  storyTitle?: string;  // 동화 제목 (마무리 멘트용)
   onNext: () => void;
   onPrevious: () => void;
   onAudioPregenerated?: (audioMap: Record<number, string>) => void;  // 미리 생성 완료 콜백
@@ -32,6 +32,7 @@ export function StoryBookPanel({
   character = null,
   storyPages = [],
   storyId,
+  storyTitle,
   onNext,
   onPrevious,
   onAudioPregenerated,
@@ -40,58 +41,92 @@ export function StoryBookPanel({
   const [isPregenerating, setIsPregenerating] = useState(false);
   const [audioMap, setAudioMap] = useState<Record<number, string>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const blobUrlRef = useRef<string | null>(null);  // blob URL 추적용
   const lastReadPageRef = useRef<number>(-1);
   const hasPregeneratedRef = useRef(false);
+  
+  // 질문 및 사용자 입력 상태
+  const [questionText, setQuestionText] = useState<string | null>(null);
+  const [questionAudioUrl, setQuestionAudioUrl] = useState<string | null>(null);
+  const [isWaitingForAnswer, setIsWaitingForAnswer] = useState(false);
+  const [userAnswer, setUserAnswer] = useState('');
+  const [isProcessingAnswer, setIsProcessingAnswer] = useState(false);
+  const [closingMessage, setClosingMessage] = useState<string | null>(null);
+  const [closingAudioUrl, setClosingAudioUrl] = useState<string | null>(null);
+  const questionAudioRef = useRef<HTMLAudioElement | null>(null);
+  const closingAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // 음성 ON 시 전체 동화 미리 생성 (최초 1회만)
-  useEffect(() => {
-    const pregenerateAllPages = async () => {
-      if (!isVoiceEnabled || !character || !storyPages.length) return;
-      if (hasPregeneratedRef.current || isPregenerating) return;
+  // 음성 ON 시 전체 동화 미리 생성 비활성화
+  // handleStartStory에서 이미 오디오를 생성하므로 중복 방지
+  // useEffect(() => {
+  //   const pregenerateAllPages = async () => {
+  //     if (!isVoiceEnabled || !character || !storyPages.length) return;
+  //     if (hasPregeneratedRef.current || isPregenerating) return;
 
-      hasPregeneratedRef.current = true;
-      setIsPregenerating(true);
+  //     hasPregeneratedRef.current = true;
+  //     setIsPregenerating(true);
 
-      try {
-        console.log('🎤 동화책 전체 페이지 TTS 미리 생성 중...');
+  //     try {
+  //       console.log('🎤 동화책 전체 페이지 TTS 미리 생성 중...');
         
-        // 백엔드에 전체 페이지 미리 생성 요청
-        const result: PreGenerateResponse = await pregenerateStoryAudio(
-          character.voice,  // character_id
-          storyPages.map(page => ({
-            page: page.page,
-            text: page.text
-          })),
-          storyId  // story_id (선택)
-        );
+  //       // 백엔드에 전체 페이지 미리 생성 요청
+  //       const result: PreGenerateResponse = await pregenerateStoryAudio(
+  //         character.voice,  // character_id
+  //         storyPages.map(page => ({
+  //           page: page.page,
+  //           text: page.text
+  //         })),
+  //         storyId  // story_id (선택)
+  //       );
 
-        // 오디오 URL 맵핑 생성
-        const urls: Record<number, string> = {};
-        result.pages.forEach(page => {
-          if (page.audio_url) {
-            // 상대 경로면 API URL 추가
-            if (page.audio_url.startsWith('/')) {
-              urls[page.page] = `${API_BASE_URL}${page.audio_url}`;
-            } else {
-              urls[page.page] = page.audio_url;
-            }
+  //       // 오디오 URL 맵핑 생성
+  //       const urls: Record<number, string> = {};
+  //       result.pages.forEach(page => {
+  //         if (page.audio_url) {
+  //           // 상대 경로면 API URL 추가
+  //           if (page.audio_url.startsWith('/')) {
+  //             urls[page.page] = `${API_BASE_URL}${page.audio_url}`;
+  //           } else {
+  //             urls[page.page] = page.audio_url;
+  //           }
+  //         }
+  //       });
+
+  //       setAudioMap(urls);
+  //       onAudioPregenerated?.(urls);
+        
+  //       console.log(`✅ ${result.total_pages}개 페이지 TTS 생성 완료!`);
+  //     } catch (error) {
+  //       console.error('❌ 동화 TTS 미리 생성 실패:', error);
+  //       hasPregeneratedRef.current = false;  // 실패 시 재시도 가능하도록
+  //     } finally {
+  //       setIsPregenerating(false);
+  //     }
+  //   };
+
+  //   pregenerateAllPages();
+  // }, [isVoiceEnabled, character, storyPages, isPregenerating, onAudioPregenerated]);
+  
+  // handleStartStory에서 생성된 오디오 URL을 audioMap에 설정
+  useEffect(() => {
+    if (storyPages && storyPages.length > 0) {
+      const urls: Record<number, string> = {};
+      storyPages.forEach(page => {
+        if (page.audio_url) {
+          // 상대 경로면 API URL 추가
+          if (page.audio_url.startsWith('/')) {
+            urls[page.page] = `${API_BASE_URL}${page.audio_url}`;
+          } else {
+            urls[page.page] = page.audio_url;
           }
-        });
-
+        }
+      });
+      if (Object.keys(urls).length > 0) {
         setAudioMap(urls);
         onAudioPregenerated?.(urls);
-        
-        console.log(`✅ ${result.total_pages}개 페이지 TTS 생성 완료!`);
-      } catch (error) {
-        console.error('❌ 동화 TTS 미리 생성 실패:', error);
-        hasPregeneratedRef.current = false;  // 실패 시 재시도 가능하도록
-      } finally {
-        setIsPregenerating(false);
       }
-    };
-
-    pregenerateAllPages();
-  }, [isVoiceEnabled, character, storyPages, isPregenerating, onAudioPregenerated]);
+    }
+  }, [storyPages]);
 
   // 페이지가 바뀔 때마다 미리 생성된 오디오 재생
   useEffect(() => {
@@ -106,6 +141,11 @@ export function StoryBookPanel({
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;
+      }
+      // 이전 blob URL 정리
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
       }
 
       try {
@@ -134,20 +174,160 @@ export function StoryBookPanel({
           return;
         }
 
-        const audio = new Audio(audioUrl);
-        audioRef.current = audio;
+        console.log(`🎵 오디오 URL: ${audioUrl}`);
+        console.log(`📄 currentPage:`, currentPage);
+        console.log(`🗺️ audioMap:`, audioMap);
+        
+        // fetch로 오디오를 blob으로 가져온 후 Object URL 생성 (CORS/형식 문제 해결)
+        try {
+          const response = await fetch(audioUrl, {
+            method: 'GET',
+            headers: {
+              'ngrok-skip-browser-warning': 'true'
+            }
+          });
+          
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+          
+          const blob = await response.blob();
+          console.log(`📦 오디오 blob 생성: ${blob.size} bytes, type: ${blob.type}`);
+          
+          // blob URL 생성
+          const blobUrl = URL.createObjectURL(blob);
+          blobUrlRef.current = blobUrl;  // ref에 저장
+          console.log(`🔗 Blob URL 생성: ${blobUrl}`);
+          
+          const audio = new Audio(blobUrl);
+          audioRef.current = audio;
 
-        audio.onended = () => {
+          audio.onended = async () => {
+            setIsLoadingAudio(false);
+            // 메모리 정리
+            if (blobUrlRef.current) {
+              URL.revokeObjectURL(blobUrlRef.current);
+              blobUrlRef.current = null;
+            }
+            
+            if (!currentPage || !character) return;
+            
+            // 마지막 페이지인 경우 마무리 멘트 생성
+            if (currentPage.page === totalPages) {
+              console.log(`✅ 마지막 페이지(${currentPage.page}) 재생 완료, 마무리 멘트 생성`);
+              try {
+                // 전체 동화 텍스트 수집
+                const allText = storyPages?.map(p => p.text).join(' ') || currentPage.text;
+                
+                const closingResult = await generateClosingMessage({
+                  story_title: storyTitle || '동화',
+                  story_summary: allText,
+                  character_id: character.voice,
+                  character_name: character.name,
+                });
+                
+                setClosingMessage(closingResult.text);
+                if (closingResult.audio_url) {
+                  const closingAudioUrl = closingResult.audio_url.startsWith('/')
+                    ? `${API_BASE_URL}${closingResult.audio_url}`
+                    : closingResult.audio_url;
+                  setClosingAudioUrl(closingAudioUrl);
+                  
+                  // 마무리 멘트 오디오 재생
+                  const response = await fetch(closingAudioUrl, {
+                    headers: { 'ngrok-skip-browser-warning': 'true' }
+                  });
+                  const blob = await response.blob();
+                  const blobUrl = URL.createObjectURL(blob);
+                  
+                  const closingAudio = new Audio(blobUrl);
+                  closingAudioRef.current = closingAudio;
+                  
+                  closingAudio.onended = () => {
+                    URL.revokeObjectURL(blobUrl);
+                    closingAudioRef.current = null;
+                    setClosingMessage(null);
+                    setClosingAudioUrl(null);
+                  };
+                  
+                  await closingAudio.play();
+                }
+              } catch (error) {
+                console.error('❌ 마무리 멘트 생성 실패:', error);
+              }
+              return;
+            }
+            
+            // 페이지가 2의 배수인 경우 질문 생성
+            if (currentPage.page % 2 === 0 && currentPage.text) {
+              console.log(`❓ 페이지 ${currentPage.page}는 2의 배수, 질문 생성`);
+              try {
+                const questionResult = await generateQuestion({
+                  page_text: currentPage.text,
+                  character_id: character.voice,
+                  character_name: character.name,
+                  story_title: storyTitle,
+                });
+                
+                setQuestionText(questionResult.text);
+                if (questionResult.audio_url) {
+                  const qAudioUrl = questionResult.audio_url.startsWith('/')
+                    ? `${API_BASE_URL}${questionResult.audio_url}`
+                    : questionResult.audio_url;
+                  setQuestionAudioUrl(qAudioUrl);
+                  
+                  // 질문 오디오 재생
+                  const response = await fetch(qAudioUrl, {
+                    headers: { 'ngrok-skip-browser-warning': 'true' }
+                  });
+                  const blob = await response.blob();
+                  const blobUrl = URL.createObjectURL(blob);
+                  
+                  const questionAudio = new Audio(blobUrl);
+                  questionAudioRef.current = questionAudio;
+                  
+                  questionAudio.onended = () => {
+                    URL.revokeObjectURL(blobUrl);
+                    questionAudioRef.current = null;
+                    setIsWaitingForAnswer(true);
+                  };
+                  
+                  await questionAudio.play();
+                } else {
+                  setIsWaitingForAnswer(true);
+                }
+              } catch (error) {
+                console.error('❌ 질문 생성 실패:', error);
+                // 질문 생성 실패 시 다음 페이지로 이동
+                onNext();
+              }
+            } else {
+              // 2의 배수가 아니면 바로 다음 페이지로 이동
+              console.log(`⏭️ 페이지 ${currentPage.page} 재생 완료, 다음 페이지로 이동`);
+              onNext();
+            }
+          };
+
+          audio.onerror = (error) => {
+            console.error('❌ 오디오 재생 실패:', error);
+            console.error('❌ 오디오 요소 src:', audio.src);
+            console.error('❌ 오디오 요소 readyState:', audio.readyState);
+            console.error('❌ 오디오 요소 networkState:', audio.networkState);
+            console.error('❌ 오디오 요소 error:', audio.error);
+            setIsLoadingAudio(false);
+            // 메모리 정리
+            if (blobUrlRef.current) {
+              URL.revokeObjectURL(blobUrlRef.current);
+              blobUrlRef.current = null;
+            }
+          };
+
+          await audio.play();
+          console.log(`🔊 페이지 ${currentPage.page} 재생 중`);
+        } catch (fetchError) {
+          console.error('❌ 오디오 fetch 실패:', fetchError);
           setIsLoadingAudio(false);
-        };
-
-        audio.onerror = (error) => {
-          console.error('오디오 재생 실패:', error);
-          setIsLoadingAudio(false);
-        };
-
-        await audio.play();
-        console.log(`🔊 페이지 ${currentPage.page} 재생 중`);
+        }
       } catch (error) {
         console.error('오디오 재생 실패:', error);
         setIsLoadingAudio(false);
@@ -162,8 +342,20 @@ export function StoryBookPanel({
         audioRef.current.pause();
         audioRef.current = null;
       }
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
+      if (questionAudioRef.current) {
+        questionAudioRef.current.pause();
+        questionAudioRef.current = null;
+      }
+      if (closingAudioRef.current) {
+        closingAudioRef.current.pause();
+        closingAudioRef.current = null;
+      }
     };
-  }, [currentPage, isVoiceEnabled, isPlaying, audioMap]);
+  }, [currentPage, isVoiceEnabled, isPlaying, audioMap, character, storyPages, storyTitle]);
 
   // 오디오 정지 함수 (외부에서 호출 가능하도록)
   const stopAudio = () => {
@@ -172,6 +364,10 @@ export function StoryBookPanel({
       audioRef.current.currentTime = 0;
       audioRef.current = null;
       setIsLoadingAudio(false);
+    }
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
     }
   };
 
@@ -258,6 +454,95 @@ export function StoryBookPanel({
           <div className="text-xl leading-relaxed text-gray-800 text-center mb-8">
             {currentPage.text}
           </div>
+
+          {/* 질문 표시 */}
+          {questionText && (
+            <div className="mb-6 p-4 bg-blue-50 rounded-lg border-2 border-blue-200">
+              <p className="text-sm text-blue-600 font-semibold mb-2">❓ 질문</p>
+              <p className="text-lg text-blue-800">{questionText}</p>
+            </div>
+          )}
+
+          {/* 사용자 답변 입력 */}
+          {isWaitingForAnswer && (
+            <div className="mb-6 p-4 bg-yellow-50 rounded-lg border-2 border-yellow-200">
+              <p className="text-sm text-yellow-700 font-semibold mb-3">💭 답변을 입력해주세요</p>
+              <textarea
+                value={userAnswer}
+                onChange={(e) => setUserAnswer(e.target.value)}
+                placeholder="답변을 입력하세요..."
+                className="w-full p-3 border border-yellow-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                rows={3}
+              />
+              <button
+                onClick={async () => {
+                  if (!userAnswer.trim() || !character) return;
+                  
+                  setIsProcessingAnswer(true);
+                  try {
+                    // LLM이 답변에 대한 응답 생성
+                    const response = await chatWithLLMAndTTS({
+                      message: `질문: ${questionText}\n사용자 답변: ${userAnswer}\n\n사용자의 답변에 대해 격려하고 아주 간단히 설명해주세요.`,
+                      character_id: character.voice,
+                      character_name: character.name,
+                      return_audio: true,
+                    });
+                    
+                    // 응답 오디오 재생
+                    if (response.audio_url) {
+                      const responseAudioUrl = response.audio_url.startsWith('/')
+                        ? `${API_BASE_URL}${response.audio_url}`
+                        : response.audio_url;
+                      
+                      const responseFetch = await fetch(responseAudioUrl, {
+                        headers: { 'ngrok-skip-browser-warning': 'true' }
+                      });
+                      const blob = await responseFetch.blob();
+                      const blobUrl = URL.createObjectURL(blob);
+                      
+                      const responseAudio = new Audio(blobUrl);
+                      
+                      responseAudio.onended = () => {
+                        URL.revokeObjectURL(blobUrl);
+                        // 상태 초기화 및 다음 페이지로 이동
+                        setQuestionText(null);
+                        setQuestionAudioUrl(null);
+                        setIsWaitingForAnswer(false);
+                        setUserAnswer('');
+                        setIsProcessingAnswer(false);
+                        onNext();
+                      };
+                      
+                      await responseAudio.play();
+                    } else {
+                      // 오디오가 없으면 바로 다음 페이지로
+                      setQuestionText(null);
+                      setQuestionAudioUrl(null);
+                      setIsWaitingForAnswer(false);
+                      setUserAnswer('');
+                      setIsProcessingAnswer(false);
+                      onNext();
+                    }
+                  } catch (error) {
+                    console.error('❌ 답변 처리 실패:', error);
+                    setIsProcessingAnswer(false);
+                  }
+                }}
+                disabled={!userAnswer.trim() || isProcessingAnswer}
+                className="w-full px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                {isProcessingAnswer ? '처리 중...' : '답변 제출'}
+              </button>
+            </div>
+          )}
+
+          {/* 마무리 멘트 */}
+          {closingMessage && (
+            <div className="mb-6 p-4 bg-green-50 rounded-lg border-2 border-green-200">
+              <p className="text-sm text-green-600 font-semibold mb-2">🎉 마무리</p>
+              <p className="text-lg text-green-800">{closingMessage}</p>
+            </div>
+          )}
 
           {/* 페이지 진행 표시 */}
           <div className="flex justify-center gap-2 mt-8">

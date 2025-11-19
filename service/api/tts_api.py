@@ -28,13 +28,16 @@ from zonos.utils import DEFAULT_DEVICE as device
 BASE_DIR = Path(__file__).parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-# OpenAI LLM 지원
+# LLM 서비스 import
 try:
-    import openai
-    OPENAI_AVAILABLE = True
-except ImportError:
+    from ..llm import LLMService, OPENAI_AVAILABLE
+    llm_service = LLMService()
+    LLM_AVAILABLE = True
+except ImportError as e:
+    LLM_AVAILABLE = False
     OPENAI_AVAILABLE = False
-    print("⚠️ OpenAI 패키지가 설치되지 않았습니다. LLM 기능을 사용하려면 'pip install openai'를 실행하세요.")
+    llm_service = None
+    print(f"⚠️ LLM 모듈을 불러올 수 없습니다: {e}")
 
 # MongoDB 지원
 MONGODB_AVAILABLE = False
@@ -436,6 +439,22 @@ async def startup_event():
                 character_repo = CharacterRepository(db)
                 storybook_repo = StorybookRepository(db)
                 audio_cache_repo = AudioCacheRepository(db)
+                
+                # audio_cache 컬렉션에 unique index 생성 (중복 저장 방지)
+                try:
+                    await audio_cache_repo.collection.create_index(
+                        [("character_id", 1), ("story_id", 1), ("chunk_index", 1)],
+                        unique=True,
+                        name="unique_audio_cache"
+                    )
+                    print("✅ Unique index created on audio_cache (character_id, story_id, chunk_index)")
+                except Exception as idx_error:
+                    # 이미 인덱스가 있으면 무시
+                    if "already exists" in str(idx_error) or "E11000" in str(idx_error):
+                        print("✅ Unique index already exists on audio_cache")
+                    else:
+                        print(f"⚠️ Failed to create unique index: {idx_error}")
+                
                 print("✅ Repositories initialized")
         except Exception as e:
             print(f"⚠️ MongoDB connection failed: {e}")
@@ -765,36 +784,62 @@ async def pregenerate_story_audio(request: PreGenerateStoryRequest):
             else:
                 # TTS 생성
                 print(f"🎤 Generating page {page_num}...")
-                wavs = generate_tts_audio(text, speaker_embedding, language="ko")
-                sampling_rate = model.autoencoder.sampling_rate
                 
-                # 오디오를 바이트로 변환
-                audio_bytes = convert_audio_to_bytes(wavs, sampling_rate)
-                
-                # GridFS에 저장
-                filename = f"{character_id}_{story_id}_page_{page_num}.wav"
-                file_id = await audio_cache_repo.save_audio_to_gridfs(
-                    audio_bytes,
-                    filename,
-                    metadata={
-                        "character_id": character_id,
-                        "story_id": story_id,
-                        "page": page_num
-                    }
+                # Race condition 방지: 저장 전에 다시 한 번 확인
+                cache_check = await audio_cache_repo.find_cache_by_page(
+                    character_id, 
+                    story_id, 
+                    page_num
                 )
-                
-                # 메타데이터 저장
-                cache_doc = AudioCacheDB(
-                    character_id=character_id,
-                    story_id=story_id,
-                    chunk_index=page_num,
-                    audio_file_id=file_id,
-                    generated_at=datetime.now()
-                )
-                await audio_cache_repo.save_cache(cache_doc)
-                
-                audio_url = f"/cache/gridfs/{file_id}"
-                print(f"✅ Page {page_num} generated and cached in GridFS")
+                if cache_check:
+                    print(f"✅ Page {page_num} was cached by another request, using existing")
+                    audio_url = f"/cache/gridfs/{cache_check.audio_file_id}"
+                else:
+                    wavs = generate_tts_audio(text, speaker_embedding, language="ko")
+                    sampling_rate = model.autoencoder.sampling_rate
+                    
+                    # 오디오를 바이트로 변환
+                    audio_bytes = convert_audio_to_bytes(wavs, sampling_rate)
+                    
+                    # GridFS에 저장
+                    filename = f"{character_id}_{story_id}_page_{page_num}.wav"
+                    file_id = await audio_cache_repo.save_audio_to_gridfs(
+                        audio_bytes,
+                        filename,
+                        metadata={
+                            "character_id": character_id,
+                            "story_id": story_id,
+                            "page": page_num
+                        }
+                    )
+                    
+                    # 메타데이터 저장 (중복 방지: 이미 있으면 에러 무시)
+                    try:
+                        cache_doc = AudioCacheDB(
+                            character_id=character_id,
+                            story_id=story_id,
+                            chunk_index=page_num,
+                            audio_file_id=file_id,
+                            generated_at=datetime.now()
+                        )
+                        await audio_cache_repo.save_cache(cache_doc)
+                        print(f"✅ Page {page_num} generated and cached in GridFS")
+                    except Exception as save_error:
+                        # 중복 저장 시도 시 (다른 요청이 이미 저장함)
+                        print(f"⚠️ Page {page_num} cache save conflict (likely duplicate), checking existing cache...")
+                        existing_cache = await audio_cache_repo.find_cache_by_page(
+                            character_id, 
+                            story_id, 
+                            page_num
+                        )
+                        if existing_cache:
+                            print(f"✅ Using existing cache for page {page_num}")
+                            file_id = existing_cache.audio_file_id
+                        else:
+                            # 정말 저장 실패한 경우
+                            print(f"❌ Failed to save cache for page {page_num}: {save_error}")
+                    
+                    audio_url = f"/cache/gridfs/{file_id}"
             
             generated_pages.append({
                 "page": page_num,
@@ -861,6 +906,34 @@ async def get_cached_audio_from_gridfs(file_id: str):
 
 # ==================== LLM API 엔드포인트 ====================
 
+async def generate_tts_for_llm(text: str, character_id: str) -> str:
+    """
+    LLM 텍스트를 TTS로 변환하는 헬퍼 함수
+    
+    Args:
+        text: TTS로 변환할 텍스트
+        character_id: 캐릭터 ID
+        
+    Returns:
+        audio_url: 생성된 오디오 파일 URL
+    """
+    if character_id not in characters_db:
+        raise HTTPException(status_code=404, detail="Character not found")
+    
+    # Speaker Embedding 로드 및 TTS 생성
+    speaker_embedding = load_character_embedding(character_id)
+    wavs = generate_tts_audio(text, speaker_embedding, language="ko")
+    
+    # 파일 저장
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"llm_{character_id}_{timestamp}.wav"
+    output_path = OUTPUTS_DIR / filename
+    save_audio_file(wavs, model.autoencoder.sampling_rate, output_path)
+    
+    audio_url = f"/outputs/{filename}"
+    print(f"✅ LLM + TTS generated: {output_path}")
+    return audio_url
+
 @app.post("/llm/chat", response_model=LLMChatResponse)
 async def chat_with_llm(request: LLMChatRequest):
     """
@@ -872,82 +945,117 @@ async def chat_with_llm(request: LLMChatRequest):
     Returns:
         LLMChatResponse: LLM 응답 텍스트 및 TTS 오디오 URL (선택)
     """
-    if not OPENAI_AVAILABLE:
+    if not LLM_AVAILABLE or llm_service is None:
         raise HTTPException(
             status_code=500,
-            detail="OpenAI 패키지가 설치되지 않았습니다. 'pip install openai'를 실행하세요."
-        )
-    
-    # OpenAI API 키 확인
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=500,
-            detail="OpenAI API 키가 설정되지 않았습니다. OPENAI_API_KEY 환경 변수를 설정하세요."
+            detail="LLM 서비스가 사용 불가능합니다. 'pip install openai'를 실행하세요."
         )
     
     try:
-        # 1. 시스템 프롬프트 설정
-        system_prompt = request.system_prompt or "당신은 친절한 동화 작가입니다."
-        if request.character_name:
-            system_prompt += f" {request.character_name} 캐릭터의 성격으로 대답해주세요."
+        # TTS 콜백 함수 정의
+        async def tts_callback(text: str, char_id: str) -> str:
+            return await generate_tts_for_llm(text, char_id)
         
-        # 2. OpenAI LLM API 호출 (최신 API 방식)
-        # openai >= 1.0.0 버전 대응
-        try:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=api_key)
-            response = await client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": request.message}
-                ],
-                temperature=0.7,
-                max_tokens=500
-            )
-            llm_text = response.choices[0].message.content
-        except ImportError:
-            # 구버전 openai (< 1.0.0) 대응
-            openai.api_key = api_key
-            response = await openai.ChatCompletion.acreate(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": request.message}
-                ],
-                temperature=0.7,
-                max_tokens=500
-            )
-            llm_text = response.choices[0].message.content
+        result = await llm_service.chat(
+            message=request.message,
+            character_id=request.character_id if request.return_audio else None,
+            character_name=request.character_name,
+            system_prompt=request.system_prompt,
+            return_audio=request.return_audio,
+            tts_callback=tts_callback if request.return_audio and request.character_id else None
+        )
         
-        audio_url = None
-        
-        # 4. TTS 생성 (요청된 경우)
-        if request.return_audio and request.character_id:
-            if request.character_id not in characters_db:
-                raise HTTPException(status_code=404, detail="Character not found")
-            
-            # Speaker Embedding 로드 및 TTS 생성
-            speaker_embedding = load_character_embedding(request.character_id)
-            wavs = generate_tts_audio(llm_text, speaker_embedding, language="ko")
-            
-            # 파일 저장
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"llm_{request.character_id}_{timestamp}.wav"
-            output_path = OUTPUTS_DIR / filename
-            save_audio_file(wavs, model.autoencoder.sampling_rate, output_path)
-            
-            audio_url = f"/outputs/{filename}"
-            print(f"✅ LLM + TTS generated: {output_path}")
-        
-        return LLMChatResponse(text=llm_text, audio_url=audio_url)
+        return LLMChatResponse(text=result["text"], audio_url=result.get("audio_url"))
         
     except HTTPException:
         raise
     except Exception as e:
         print(f"❌ Error in LLM chat: {e}")
         raise HTTPException(status_code=500, detail=f"LLM 처리 중 오류: {str(e)}")
+
+@app.post("/llm/generate-question", response_model=LLMChatResponse)
+async def generate_question(
+    page_text: str = Form(...),
+    character_id: str = Form(...),
+    character_name: Optional[str] = Form(None),
+    story_title: Optional[str] = Form(None)
+):
+    """
+    페이지 텍스트를 기반으로 질문 생성
+    
+    Args:
+        page_text: 페이지 텍스트
+        character_id: 캐릭터 ID
+        character_name: 캐릭터 이름
+        story_title: 동화 제목
+        
+    Returns:
+        LLMChatResponse: 생성된 질문 텍스트 및 TTS 오디오 URL
+    """
+    if not LLM_AVAILABLE or llm_service is None:
+        raise HTTPException(
+            status_code=500,
+            detail="LLM 서비스가 사용 불가능합니다."
+        )
+    
+    try:
+        async def tts_callback(text: str, char_id: str) -> str:
+            return await generate_tts_for_llm(text, char_id)
+        
+        result = await llm_service.generate_question(
+            page_text=page_text,
+            character_id=character_id,
+            character_name=character_name,
+            story_title=story_title,
+            tts_callback=tts_callback
+        )
+        
+        return LLMChatResponse(text=result["text"], audio_url=result.get("audio_url"))
+    except Exception as e:
+        print(f"❌ Error generating question: {e}")
+        raise HTTPException(status_code=500, detail=f"질문 생성 중 오류: {str(e)}")
+
+@app.post("/llm/generate-closing", response_model=LLMChatResponse)
+async def generate_closing_message(
+    story_title: str = Form(...),
+    story_summary: str = Form(...),
+    character_id: str = Form(...),
+    character_name: Optional[str] = Form(None)
+):
+    """
+    동화 마무리 멘트 생성
+    
+    Args:
+        story_title: 동화 제목
+        story_summary: 동화 요약 또는 전체 텍스트
+        character_id: 캐릭터 ID
+        character_name: 캐릭터 이름
+        
+    Returns:
+        LLMChatResponse: 생성된 마무리 멘트 텍스트 및 TTS 오디오 URL
+    """
+    if not LLM_AVAILABLE or llm_service is None:
+        raise HTTPException(
+            status_code=500,
+            detail="LLM 서비스가 사용 불가능합니다."
+        )
+    
+    try:
+        async def tts_callback(text: str, char_id: str) -> str:
+            return await generate_tts_for_llm(text, char_id)
+        
+        result = await llm_service.generate_closing_message(
+            story_title=story_title,
+            story_summary=story_summary,
+            character_id=character_id,
+            character_name=character_name,
+            tts_callback=tts_callback
+        )
+        
+        return LLMChatResponse(text=result["text"], audio_url=result.get("audio_url"))
+    except Exception as e:
+        print(f"❌ Error generating closing message: {e}")
+        raise HTTPException(status_code=500, detail=f"마무리 멘트 생성 중 오류: {str(e)}")
 
 # ==================== MongoDB 동화 API 엔드포인트 ====================
 
@@ -1118,36 +1226,62 @@ async def pregenerate_story_pages_audio(story_id: str, character_id: str = Form(
                 audio_url = f"/cache/gridfs/{cache.audio_file_id}"
             else:
                 print(f"🎤 Generating audio for page {page.page}...")
-                wavs = generate_tts_audio(page.text, speaker_embedding, language="ko")
-                sampling_rate = model.autoencoder.sampling_rate
                 
-                # 오디오를 바이트로 변환
-                audio_bytes = convert_audio_to_bytes(wavs, sampling_rate)
-                
-                # GridFS에 저장
-                filename = f"{character_id}_{story_id}_page_{page.page}.wav"
-                file_id = await audio_cache_repo.save_audio_to_gridfs(
-                    audio_bytes,
-                    filename,
-                    metadata={
-                        "character_id": character_id,
-                        "story_id": story_id,
-                        "page": page.page
-                    }
+                # Race condition 방지: 저장 전에 다시 한 번 확인
+                cache_check = await audio_cache_repo.find_cache_by_page(
+                    character_id, 
+                    story_id, 
+                    page.page
                 )
-                
-                # 메타데이터 저장
-                cache_doc = AudioCacheDB(
-                    character_id=character_id,
-                    story_id=story_id,
-                    chunk_index=page.page,
-                    audio_file_id=file_id,
-                    generated_at=datetime.now()
-                )
-                await audio_cache_repo.save_cache(cache_doc)
-                
-                audio_url = f"/cache/gridfs/{file_id}"
-                print(f"✅ Page {page.page} audio generated and cached in GridFS")
+                if cache_check:
+                    print(f"✅ Page {page.page} was cached by another request, using existing")
+                    audio_url = f"/cache/gridfs/{cache_check.audio_file_id}"
+                else:
+                    wavs = generate_tts_audio(page.text, speaker_embedding, language="ko")
+                    sampling_rate = model.autoencoder.sampling_rate
+                    
+                    # 오디오를 바이트로 변환
+                    audio_bytes = convert_audio_to_bytes(wavs, sampling_rate)
+                    
+                    # GridFS에 저장
+                    filename = f"{character_id}_{story_id}_page_{page.page}.wav"
+                    file_id = await audio_cache_repo.save_audio_to_gridfs(
+                        audio_bytes,
+                        filename,
+                        metadata={
+                            "character_id": character_id,
+                            "story_id": story_id,
+                            "page": page.page
+                        }
+                    )
+                    
+                    # 메타데이터 저장 (중복 방지: 이미 있으면 에러 무시)
+                    try:
+                        cache_doc = AudioCacheDB(
+                            character_id=character_id,
+                            story_id=story_id,
+                            chunk_index=page.page,
+                            audio_file_id=file_id,
+                            generated_at=datetime.now()
+                        )
+                        await audio_cache_repo.save_cache(cache_doc)
+                        print(f"✅ Page {page.page} audio generated and cached in GridFS")
+                    except Exception as save_error:
+                        # 중복 저장 시도 시 (다른 요청이 이미 저장함)
+                        print(f"⚠️ Page {page.page} cache save conflict (likely duplicate), checking existing cache...")
+                        existing_cache = await audio_cache_repo.find_cache_by_page(
+                            character_id, 
+                            story_id, 
+                            page.page
+                        )
+                        if existing_cache:
+                            print(f"✅ Using existing cache for page {page.page}")
+                            file_id = existing_cache.audio_file_id
+                        else:
+                            # 정말 저장 실패한 경우
+                            print(f"❌ Failed to save cache for page {page.page}: {save_error}")
+                    
+                    audio_url = f"/cache/gridfs/{file_id}"
                 
             generated_pages.append({
                 "page": page.page,

@@ -255,6 +255,74 @@ export async function chatWithLLMAndTTS(request: LLMChatRequest): Promise<LLMCha
 }
 
 /**
+ * 질문 생성
+ * POST /llm/generate-question
+ */
+export interface GenerateQuestionRequest {
+  page_text: string;
+  character_id: string;
+  character_name?: string;
+  story_title?: string;
+}
+
+export async function generateQuestion(request: GenerateQuestionRequest): Promise<LLMChatResponse> {
+  try {
+    const formData = new FormData();
+    formData.append('page_text', request.page_text);
+    formData.append('character_id', request.character_id);
+    if (request.character_name) {
+      formData.append('character_name', request.character_name);
+    }
+    if (request.story_title) {
+      formData.append('story_title', request.story_title);
+    }
+    
+    const response = await apiClient.post('/llm/generate-question', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  } catch (error) {
+    console.error('[API] generateQuestion 에러:', error);
+    throw error;
+  }
+}
+
+/**
+ * 마무리 멘트 생성
+ * POST /llm/generate-closing
+ */
+export interface GenerateClosingRequest {
+  story_title: string;
+  story_summary: string;
+  character_id: string;
+  character_name?: string;
+}
+
+export async function generateClosingMessage(request: GenerateClosingRequest): Promise<LLMChatResponse> {
+  try {
+    const formData = new FormData();
+    formData.append('story_title', request.story_title);
+    formData.append('story_summary', request.story_summary);
+    formData.append('character_id', request.character_id);
+    if (request.character_name) {
+      formData.append('character_name', request.character_name);
+    }
+    
+    const response = await apiClient.post('/llm/generate-closing', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  } catch (error) {
+    console.error('[API] generateClosingMessage 에러:', error);
+    throw error;
+  }
+}
+
+/**
  * ==========================================
  * TTS API
  * ==========================================
