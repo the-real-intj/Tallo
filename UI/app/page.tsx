@@ -61,13 +61,13 @@ export default function HomePage() {
     setCurrentPage(1);
     setIsPlaying(false);
     
-    // 스토리 선택 시 인사 메시지
-    if (selectedCharacter) {
-      addMessage(
-        'character',
-        `${story.title} 이야기를 시작할까?`
-      );
-    }
+  //   // 스토리 선택 시 인사 메시지
+  //   if (selectedCharacter) {
+  //     addMessage(
+  //       'character',
+  //       `${story.title} 이야기를 시작할까?`
+  //     );
+  //   }
   };
 
   // 이야기 시작
@@ -90,42 +90,91 @@ export default function HomePage() {
     if (selectedStory.pages && selectedStory.pages.length > 0 && isVoiceEnabled) {
       try {
         // 먼저 이미 생성된 오디오 파일이 있는지 확인
+        console.log('🔍 오디오 파일 확인 시작:', selectedStory.id, selectedCharacter.voice);
         const audioCheck = await checkStoryAudioFiles(selectedStory.id, selectedCharacter.voice);
+        console.log('📊 오디오 확인 결과:', {
+          total: audioCheck.total_pages,
+          existing: audioCheck.existing_audio_count,
+          all_exists: audioCheck.all_audio_exists,
+          existing_audio: audioCheck.existing_audio
+        });
         
-        if (audioCheck.all_audio_exists && audioCheck.existing_audio.length > 0) {
-          // 이미 모든 오디오가 있으면 그대로 사용
-          console.log('✅ 이미 생성된 오디오 파일 사용:', audioCheck.existing_audio_count);
+        // 기존 오디오가 있으면 먼저 매핑
+        if (audioCheck.existing_audio.length > 0) {
+          console.log('✅ 기존 오디오 파일 매핑:', audioCheck.existing_audio_count);
           updatedStoryPages = selectedStory.pages.map(page => {
             const existing = audioCheck.existing_audio.find(ea => ea.page === page.page);
-            return existing?.audio_url 
-              ? { ...page, audio_url: existing.audio_url }
-              : page;
+            if (existing?.audio_url) {
+              console.log(`✅ 페이지 ${page.page} 오디오 URL:`, existing.audio_url);
+              return { ...page, audio_url: existing.audio_url };
+            }
+            return page;
           });
-        } else {
-          // 일부만 있거나 없으면 생성
-          addMessage('character', '오디오를 준비하고 있어요...');
-          const result = await pregenerateStoryPagesAudio(selectedStory.id, selectedCharacter.voice);
-          console.log('🎵 pregenerateStoryPagesAudio 결과:', result);
-          addMessage('character', '준비 완료! 이제 들려드릴게요.');
+        }
+        
+        // 모든 오디오가 없으면 생성
+        if (!audioCheck.all_audio_exists) {
+          const missingPages = selectedStory.pages.filter(page => {
+            const hasAudio = audioCheck.existing_audio.some(ea => ea.page === page.page);
+            return !hasAudio;
+          });
           
-          // 생성된 오디오 URL을 pages에 반영
-          if (selectedStory.pages) {
-            updatedStoryPages = selectedStory.pages.map(page => {
-              const generated = result.generated_pages?.find(gp => gp.page === page.page);
-              console.log(`📄 페이지 ${page.page} 매칭:`, generated);
-              return generated?.audio_url 
-                ? { ...page, audio_url: generated.audio_url }
-                : page;
-            });
-            console.log('📝 매핑 후 updatedStoryPages:', updatedStoryPages);
+          if (missingPages.length > 0) {
+            console.log(`⚠️ ${missingPages.length}개 페이지 오디오 없음, 생성 시작...`);
+            addMessage('character', '오디오를 준비하고 있어요...');
+            const result = await pregenerateStoryPagesAudio(selectedStory.id, selectedCharacter.voice);
+            console.log('🎵 pregenerateStoryPagesAudio 결과:', result);
+            addMessage('character', '준비 완료! 이제 들려드릴게요.');
+            
+            // 생성된 오디오 URL을 pages에 반영 (기존 오디오와 병합)
+            if (selectedStory.pages && updatedStoryPages) {
+              updatedStoryPages = updatedStoryPages.map(page => {
+                // 이미 audio_url이 있으면 유지
+                if (page.audio_url) {
+                  return page;
+                }
+                // 생성된 오디오 찾기
+                const generated = result.generated_pages?.find(gp => gp.page === page.page);
+                if (generated?.audio_url) {
+                  console.log(`✅ 생성된 페이지 ${page.page} 오디오 URL:`, generated.audio_url);
+                  return { ...page, audio_url: generated.audio_url };
+                }
+                return page;
+              });
+            }
           }
         }
         
-        // 오디오 URL이 업데이트된 pages로 selectedStory 업데이트
-        console.log('📝 업데이트된 pages:', updatedStoryPages);
-        setSelectedStory({ ...selectedStory, pages: updatedStoryPages });
+        // 최종 결과 확인
+        if (updatedStoryPages) {
+          const finalAudioCount = updatedStoryPages.filter(p => p.audio_url && p.audio_url !== null).length;
+          console.log('📝 최종 업데이트된 pages:', {
+            total: updatedStoryPages.length,
+            with_audio: finalAudioCount,
+            pages: updatedStoryPages.map(p => ({ 
+              page: p.page, 
+              has_audio: !!p.audio_url && p.audio_url !== null,
+              audio_url: p.audio_url 
+            }))
+          });
+          
+          // 오디오 URL이 업데이트된 pages로 selectedStory 업데이트
+          // 새로운 객체를 생성하여 참조 변경 (React가 변경을 감지하도록)
+          const updatedStory = { 
+            ...selectedStory, 
+            pages: updatedStoryPages.map(p => ({ ...p })) // 깊은 복사
+          };
+          console.log('🔄 selectedStory 업데이트:', {
+            storyId: updatedStory.id,
+            pagesCount: updatedStory.pages?.length,
+            pagesWithAudio: updatedStory.pages?.filter(p => p.audio_url && p.audio_url !== null).length
+          });
+          setSelectedStory(updatedStory);
+        } else {
+          console.warn('⚠️ updatedStoryPages가 undefined입니다');
+        }
       } catch (error) {
-        console.error('오디오 확인/생성 실패:', error);
+        console.error('❌ 오디오 확인/생성 실패:', error);
         addMessage('character', '오디오 생성에 실패했어요. 텍스트로 읽어드릴게요.');
       }
     }

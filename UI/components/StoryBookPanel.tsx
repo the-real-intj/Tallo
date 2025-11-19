@@ -113,20 +113,40 @@ export function StoryBookPanel({
   // selectedStoryPages를 우선 사용 (더 최신 상태)
   useEffect(() => {
     const pagesToUse = selectedStoryPages || storyPages;
+    console.log(`🔍 StoryBookPanel useEffect 트리거:`, {
+      hasSelectedStoryPages: !!selectedStoryPages,
+      selectedStoryPagesLength: selectedStoryPages?.length,
+      hasStoryPages: !!storyPages,
+      storyPagesLength: storyPages?.length,
+      pagesToUseLength: pagesToUse?.length
+    });
+    
     if (pagesToUse && pagesToUse.length > 0) {
       const urls: Record<number, string> = {};
+      const audioUrlDetails: Array<{page: number, audio_url: string | null | undefined}> = [];
+      
       pagesToUse.forEach(page => {
-        if (page.audio_url) {
+        audioUrlDetails.push({ page: page.page, audio_url: page.audio_url });
+        // audio_url이 null이 아니고 undefined가 아니고 빈 문자열이 아닐 때만 추가
+        if (page.audio_url && page.audio_url !== null && page.audio_url !== '') {
           // 상대 경로면 API URL 추가
           if (page.audio_url.startsWith('/')) {
             urls[page.page] = `${API_BASE_URL}${page.audio_url}`;
-          } else {
+          } else if (page.audio_url.startsWith('http')) {
             urls[page.page] = page.audio_url;
+          } else {
+            urls[page.page] = `${API_BASE_URL}/${page.audio_url}`;
           }
         }
       });
-      console.log(`🗺️ audioMap 업데이트:`, urls);
-      console.log(`🗺️ pagesToUse:`, pagesToUse);
+      
+      console.log(`🗺️ audioMap 업데이트 시도:`, {
+        urls,
+        audioUrlDetails,
+        urlsCount: Object.keys(urls).length
+      });
+      console.log(`🗺️ pagesToUse 전체:`, pagesToUse);
+      
       if (Object.keys(urls).length > 0) {
         setAudioMap(urls);
         onAudioPregenerated?.(urls);
@@ -137,9 +157,12 @@ export function StoryBookPanel({
         }
       } else {
         console.log(`⚠️ audioMap이 비어있음 - pagesToUse에 audio_url이 없음`);
+        console.log(`⚠️ audioUrlDetails:`, audioUrlDetails);
       }
+    } else {
+      console.log(`⚠️ pagesToUse가 비어있음`);
     }
-  }, [selectedStoryPages, storyPages, currentPage]);
+  }, [selectedStoryPages, storyPages, currentPage, API_BASE_URL]);
 
   // 페이지가 바뀔 때마다 미리 생성된 오디오 재생
   useEffect(() => {

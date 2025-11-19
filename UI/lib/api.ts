@@ -334,11 +334,14 @@ export async function generateClosingMessage(request: GenerateClosingRequest): P
  */
 export interface TTSRequest {
   text: string;
-  character_id: string;
+  character_id?: string; // 선택적 (speaker_wav 사용 시)
   language?: string;
   speaking_rate?: number;
   pitch?: number;
   emotion?: string;
+  auto_emotion?: boolean; // 자동 감정 인식
+  as_file?: boolean; // 파일로 반환 여부
+  speaker_wav?: string; // 스피커 WAV 파일 경로 (character_id 대신 사용 가능)
 }
 
 export async function synthesizeTTS(request: TTSRequest): Promise<Blob> {
