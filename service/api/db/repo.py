@@ -1,0 +1,195 @@
+"""
+MongoDB 데이터 접근 레이어
+"""
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from typing import List, Optional
+from bson import ObjectId
+import torch
+import io
+
+from .model import CharacterDB, StorybookDB, AudioCacheDB
+
+class CharacterRepository:
+    def __init__(self, db: AsyncIOMotorDatabase):
+        self.collection = db["characters"]
+        self.gridfs = db.fs  # GridFS
+    
+    async def get_all(self) -> List[CharacterDB]:
+        """모든 캐릭터 조회"""
+        cursor = self.collection.find()
+        characters = await cursor.to_list(length=100)
+        result = []
+        for char in characters:
+            # ObjectId를 문자열로 변환
+            if "_id" in char and isinstance(char["_id"], ObjectId):
+                char["_id"] = str(char["_id"])
+            result.append(CharacterDB(**char))
+        return result
+    
+    async def get_by_id(self, character_id: str) -> Optional[CharacterDB]:
+        """캐릭터 ID로 조회"""
+        char = await self.collection.find_one({"character_id": character_id})
+        if char:
+            # ObjectId를 문자열로 변환
+            if "_id" in char and isinstance(char["_id"], ObjectId):
+                char["_id"] = str(char["_id"])
+            return CharacterDB(**char)
+        return None
+    
+    async def save_embedding(self, character_id: str, embedding: torch.Tensor) -> str:
+        """임베딩을 GridFS에 저장"""
+        buffer = io.BytesIO()
+        torch.save(embedding, buffer)
+        buffer.seek(0)
+        
+        from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+        bucket = AsyncIOMotorGridFSBucket(self.collection.database)
+        
+        file_id = await bucket.upload_from_stream(
+            f"{character_id}_embedding.pt",
+            buffer,
+            metadata={"character_id": character_id, "type": "embedding"}
+        )
+        return str(file_id)
+    
+    async def load_embedding(self, file_id: str) -> torch.Tensor:
+        """GridFS에서 임베딩 로드"""
+        from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+        bucket = AsyncIOMotorGridFSBucket(self.collection.database)
+        
+        grid_out = await bucket.open_download_stream(ObjectId(file_id))
+        data = await grid_out.read()
+        buffer = io.BytesIO(data)
+        embedding = torch.load(buffer, map_location='cpu')
+        return embedding
+
+class StorybookRepository:
+    def __init__(self, db: AsyncIOMotorDatabase):
+        self.collection = db["texts"]  # 기존 컬렉션 사용
+    
+    async def get_all(self) -> List[StorybookDB]:
+        """모든 동화책 조회"""
+        cursor = self.collection.find()
+        stories = await cursor.to_list(length=100)
+        result = []
+        for story in stories:
+            # ObjectId를 문자열로 변환
+            if "_id" in story and isinstance(story["_id"], ObjectId):
+                story["_id"] = str(story["_id"])
+            result.append(StorybookDB(**story))
+        return result
+    
+    async def get_by_id(self, story_id: str) -> Optional[StorybookDB]:
+        """동화책 ID로 조회"""
+        story = await self.collection.find_one({"_id": ObjectId(story_id)})
+        if story:
+            # ObjectId를 문자열로 변환
+            if "_id" in story and isinstance(story["_id"], ObjectId):
+                story["_id"] = str(story["_id"])
+            return StorybookDB(**story)
+        return None
+    
+    def chunk_text(self, text: str, lines_per_chunk: int = 4) -> List[str]:
+        """텍스트를 4-5줄 단위로 분할"""
+        # \r\n을 \n으로 통일
+        text = text.replace('\r\n', '\n')
+        
+        # 문단 단위로 분리 (빈 줄 기준)
+        paragraphs = [p.strip() for p in text.split('\n\n') if p.strip()]
+        
+        chunks = []
+        current_chunk = []
+        
+        for para in paragraphs:
+            lines = para.split('\n')
+            for line in lines:
+                if line.strip():
+                    current_chunk.append(line.strip())
+                    if len(current_chunk) >= lines_per_chunk:
+                        chunks.append('\n'.join(current_chunk))
+                        current_chunk = []
+        
+        # 남은 줄 처리
+        if current_chunk:
+            chunks.append('\n'.join(current_chunk))
+        
+        return chunks
+
+class AudioCacheRepository:
+    def __init__(self, db: AsyncIOMotorDatabase):
+        self.collection = db["audio_cache"]
+        self.db = db
+    
+    async def find_cache(self, character_id: str, story_id: str, chunk_index: int) -> Optional[AudioCacheDB]:
+        """캐시된 오디오 찾기"""
+        cache = await self.collection.find_one({
+            "character_id": character_id,
+            "story_id": story_id,
+            "chunk_index": chunk_index
+        })
+        if cache:
+            # ObjectId를 문자열로 변환
+            if "_id" in cache and isinstance(cache["_id"], ObjectId):
+                cache["_id"] = str(cache["_id"])
+            return AudioCacheDB(**cache)
+        return None
+    
+    async def find_cache_by_page(self, character_id: str, story_id: str, page_num: int) -> Optional[AudioCacheDB]:
+        """페이지 번호로 캐시 찾기"""
+        cache = await self.collection.find_one({
+            "character_id": character_id,
+            "story_id": story_id,
+            "chunk_index": page_num
+        })
+        if cache:
+            # ObjectId를 문자열로 변환
+            if "_id" in cache and isinstance(cache["_id"], ObjectId):
+                cache["_id"] = str(cache["_id"])
+            return AudioCacheDB(**cache)
+        return None
+    
+    async def save_cache(self, cache: AudioCacheDB) -> str:
+        """오디오 캐시 메타데이터 저장"""
+        result = await self.collection.insert_one(cache.dict(by_alias=True, exclude={"id"}))
+        return str(result.inserted_id)
+    
+    async def save_audio_to_gridfs(
+        self, 
+        audio_data: bytes, 
+        filename: str,
+        metadata: dict
+    ) -> str:
+        """오디오를 GridFS에 저장하고 file_id 반환"""
+        from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+        bucket = AsyncIOMotorGridFSBucket(self.db)
+        file_id = await bucket.upload_from_stream(
+            filename,
+            audio_data,
+            metadata=metadata
+        )
+        return str(file_id)
+    
+    async def load_audio_from_gridfs(self, file_id: str) -> bytes:
+        """GridFS에서 오디오 다운로드"""
+        from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+        bucket = AsyncIOMotorGridFSBucket(self.db)
+        grid_out = await bucket.open_download_stream(ObjectId(file_id))
+        audio_data = await grid_out.read()
+        return audio_data
+    
+    async def find_audio_in_gridfs(self, character_id: str, story_id: str, page_num: int) -> Optional[str]:
+        """GridFS에서 메타데이터로 오디오 파일 찾기 (audio_cache 없이도 작동)"""
+        # GridFS files 컬렉션에서 직접 검색
+        files_collection = self.db["fs.files"]
+        
+        query = {
+            "metadata.character_id": character_id,
+            "metadata.story_id": story_id,
+            "metadata.page": page_num
+        }
+        
+        file_doc = await files_collection.find_one(query)
+        
+        if file_doc and "_id" in file_doc:
+            return str(file_doc["_id"])
+        return None
