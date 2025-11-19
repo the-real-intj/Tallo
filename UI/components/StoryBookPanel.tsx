@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { StoryPage, Character } from '@/types';
 import { cn } from '@/lib/utils';
-import { pregenerateStoryAudio, getCachedAudioUrl, type PreGenerateResponse } from '@/lib/api';
+import { pregenerateStoryAudio, type PreGenerateResponse } from '@/lib/api';
 
 interface StoryBookPanelProps {
   currentPage: StoryPage | null;

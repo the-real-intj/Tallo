@@ -36,24 +36,22 @@ export async function fetchCharacters(): Promise<CharacterResponse[]> {
 }
 
 /**
- * 새 캐릭터 생성 (유튜브 또는 파일 업로드)
- * TODO: 백엔드 FastAPI 엔드포인트 연동
- * POST /api/characters
+ * 새 캐릭터 생성 (오디오 파일 업로드)
+ * POST /characters/create
  */
 export async function createCharacter(data: {
   name: string;
-  sourceType: 'youtube' | 'upload';
-  sourceUrl?: string;
-  files?: File[];
+  description?: string;
+  language?: string;
+  referenceAudio: File;
 }): Promise<CharacterResponse> {
   const formData = new FormData();
   formData.append('name', data.name);
-  formData.append('sourceType', data.sourceType);
-  if (data.sourceUrl) formData.append('sourceUrl', data.sourceUrl);
-  if (data.files) {
-    data.files.forEach(file => formData.append('files', file));
-  }
-  const response = await apiClient.post('/api/characters', formData, {
+  formData.append('reference_audio', data.referenceAudio);
+  if (data.description) formData.append('description', data.description);
+  formData.append('language', data.language || 'ko');
+  
+  const response = await apiClient.post('/characters/create', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   });
   return response.data;
@@ -130,22 +128,6 @@ export async function getStoryById(storyId: string): Promise<StoryInfo> {
     return response.data;
   } catch (error) {
     console.error('[API] getStoryById 에러:', error);
-    throw error;
-  }
-}
-
-/**
- * 동화 오디오 재생
- * GET /stories/{story_id}/audio
- */
-export async function getStoryAudio(storyId: string): Promise<Blob> {
-  try {
-    const response = await apiClient.get(`/stories/${storyId}/audio`, {
-      responseType: 'blob'
-    });
-    return response.data;
-  } catch (error) {
-    console.error('[API] getStoryAudio 에러:', error);
     throw error;
   }
 }
@@ -419,22 +401,11 @@ export async function pregenerateStoryAudio(
 }
 
 /**
- * 캐릭터의 동화책 오디오 맵 조회
- * GET /stories/audio/:characterId
- */
-export async function getStoryAudioMap(characterId: string): Promise<{
-  character_id: string;
-  pages: Record<number, string>;
-}> {
-  const response = await apiClient.get(`/stories/audio/${characterId}`);
-  return response.data;
-}
-
-/**
  * 캐시된 오디오 파일 URL 생성
+ * GET /cache/{character_id}/{story_id}/{filename}
  */
-export function getCachedAudioUrl(characterId: string, pageNum: number): string {
-  return `${API_BASE_URL}/cache/${characterId}/page_${pageNum}.wav`;
+export function getCachedAudioUrl(characterId: string, storyId: string, filename: string): string {
+  return `${API_BASE_URL}/cache/${characterId}/${storyId}/${filename}`;
 }
 
 export default apiClient;

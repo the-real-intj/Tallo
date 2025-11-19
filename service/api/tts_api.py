@@ -7,7 +7,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, TYPE_CHECKING
 import torch
 import torchaudio
 import tempfile
@@ -35,15 +35,20 @@ except ImportError:
     OPENAI_AVAILABLE = False
     print("⚠️ OpenAI 패키지가 설치되지 않았습니다. LLM 기능을 사용하려면 'pip install openai'를 실행하세요.")
 
-# MongoDB 지원 (db 폴더 사용)
+# MongoDB 지원
+MONGODB_AVAILABLE = False
+
+if TYPE_CHECKING:
+    from .db.repo import CharacterRepository, StorybookRepository, AudioCacheRepository
+    from .db.model import StorybookDB
+
 try:
-    from db.db_client import connect_to_mongo, close_mongo_connection, get_database, get_gridfs
-    from db.repo import CharacterRepository, StorybookRepository, AudioCacheRepository
-    from db.model import CharacterDB, StorybookDB, AudioCacheDB
+    from .db.db_client import connect_to_mongo, close_mongo_connection, get_database
+    from .db.repo import CharacterRepository, StorybookRepository, AudioCacheRepository
+    from .db.model import StorybookDB
     from bson import ObjectId
     MONGODB_AVAILABLE = True
 except ImportError as e:
-    MONGODB_AVAILABLE = False
     print(f"⚠️ MongoDB 모듈을 불러올 수 없습니다: {e}")
     print("⚠️ MongoDB 기능을 사용하려면 'pip install motor pymongo'를 실행하세요.")
 
@@ -91,9 +96,9 @@ characters_db: Dict = {}  # 로컬 캐릭터 DB (하위 호환)
 story_audio_cache: Dict[str, Dict[int, str]] = {}  # {character_id: {page_num: audio_path}}
 
 # Repository 인스턴스 (startup에서 초기화)
-character_repo: Optional[CharacterRepository] = None
-storybook_repo: Optional[StorybookRepository] = None
-audio_cache_repo: Optional[AudioCacheRepository] = None
+character_repo: Optional["CharacterRepository"] = None
+storybook_repo: Optional["StorybookRepository"] = None
+audio_cache_repo: Optional["AudioCacheRepository"] = None
 
 # ==================== 데이터 모델 ====================
 
@@ -330,7 +335,7 @@ def check_mongodb_available():
             detail="MongoDB가 연결되지 않았습니다. MONGO_URI 환경 변수를 설정하세요."
         )
 
-def storybookdb_to_storyinfo(story_db: StorybookDB) -> StoryInfo:
+def storybookdb_to_storyinfo(story_db: "StorybookDB") -> StoryInfo:
     """StorybookDB를 StoryInfo로 변환"""
     pages = split_story_into_pages(story_db.content)
     title = story_db.filename.replace(".txt", "") if story_db.filename else "제목 없음"

@@ -7,7 +7,7 @@ from bson import ObjectId
 import torch
 import io
 
-from db.model import CharacterDB, StorybookDB, AudioCacheDB
+from .model import CharacterDB, StorybookDB, AudioCacheDB
 
 class CharacterRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
