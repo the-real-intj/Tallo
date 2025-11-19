@@ -14,6 +14,7 @@ interface StoryBookPanelProps {
   storyPages?: StoryPage[];  // 전체 동화 페이지 추가
   storyId?: string;  // 스토리 ID (GridFS 캐싱용)
   storyTitle?: string;  // 동화 제목 (마무리 멘트용)
+  selectedStoryPages?: Array<{ page: number; text: string; audio_url?: string | null }>;  // selectedStory.pages 직접 전달
   onNext: () => void;
   onPrevious: () => void;
   onAudioPregenerated?: (audioMap: Record<number, string>) => void;  // 미리 생성 완료 콜백
@@ -33,6 +34,7 @@ export function StoryBookPanel({
   storyPages = [],
   storyId,
   storyTitle,
+  selectedStoryPages,
   onNext,
   onPrevious,
   onAudioPregenerated,
@@ -108,10 +110,12 @@ export function StoryBookPanel({
   // }, [isVoiceEnabled, character, storyPages, isPregenerating, onAudioPregenerated]);
   
   // handleStartStory에서 생성된 오디오 URL을 audioMap에 설정
+  // selectedStoryPages를 우선 사용 (더 최신 상태)
   useEffect(() => {
-    if (storyPages && storyPages.length > 0) {
+    const pagesToUse = selectedStoryPages || storyPages;
+    if (pagesToUse && pagesToUse.length > 0) {
       const urls: Record<number, string> = {};
-      storyPages.forEach(page => {
+      pagesToUse.forEach(page => {
         if (page.audio_url) {
           // 상대 경로면 API URL 추가
           if (page.audio_url.startsWith('/')) {
@@ -121,16 +125,21 @@ export function StoryBookPanel({
           }
         }
       });
+      console.log(`🗺️ audioMap 업데이트:`, urls);
+      console.log(`🗺️ pagesToUse:`, pagesToUse);
       if (Object.keys(urls).length > 0) {
         setAudioMap(urls);
         onAudioPregenerated?.(urls);
         // 오디오 URL이 새로 추가되면 lastReadPageRef 초기화하여 재실행 가능하게
-        if (currentPage && urls[currentPage.page] && !audioMap[currentPage.page]) {
+        if (currentPage && urls[currentPage.page]) {
+          console.log(`🔄 lastReadPageRef 초기화 (페이지 ${currentPage.page} 오디오 새로 추가)`);
           lastReadPageRef.current = -1;
         }
+      } else {
+        console.log(`⚠️ audioMap이 비어있음 - pagesToUse에 audio_url이 없음`);
       }
     }
-  }, [storyPages, currentPage, audioMap]);
+  }, [selectedStoryPages, storyPages, currentPage]);
 
   // 페이지가 바뀔 때마다 미리 생성된 오디오 재생
   useEffect(() => {
@@ -138,8 +147,16 @@ export function StoryBookPanel({
       // 음성이 꺼져있거나, 재생 중이 아니거나, 현재 페이지가 없으면 재생 안 함
       if (!isVoiceEnabled || !isPlaying || !currentPage) return;
 
-      // 이미 읽은 페이지면 무시 (lastReadPageRef 초기화로 재실행 가능)
-      if (currentPage.page === lastReadPageRef.current) return;
+      // 이미 읽은 페이지면 무시 (단, audio_url이 새로 생겼으면 재실행)
+      const hasAudio = currentPage.audio_url || audioMap[currentPage.page];
+      if (currentPage.page === lastReadPageRef.current) {
+        // 오디오가 새로 생겼으면 재실행
+        if (hasAudio) {
+          lastReadPageRef.current = -1;
+        } else {
+          return;
+        }
+      }
 
       // 이전 오디오 정리
       if (audioRef.current) {
@@ -154,7 +171,6 @@ export function StoryBookPanel({
 
       try {
         setIsLoadingAudio(true);
-        lastReadPageRef.current = currentPage.page;
 
         let audioUrl: string;
 
@@ -174,6 +190,10 @@ export function StoryBookPanel({
         // 둘 다 없으면 대기
         else {
           console.log(`⏳ 페이지 ${currentPage.page} 오디오 생성 중...`);
+          console.log(`🔍 디버깅: currentPage.audio_url =`, currentPage.audio_url);
+          console.log(`🔍 디버깅: audioMap[${currentPage.page}] =`, audioMap[currentPage.page]);
+          console.log(`🔍 디버깅: audioMap 전체 =`, audioMap);
+          console.log(`🔍 디버깅: storyPages =`, storyPages);
           setIsLoadingAudio(false);
           return;
         }
@@ -205,6 +225,9 @@ export function StoryBookPanel({
           
           const audio = new Audio(blobUrl);
           audioRef.current = audio;
+          
+          // 오디오 재생 시작 시 lastReadPageRef 설정
+          lastReadPageRef.current = currentPage.page;
 
           audio.onended = async () => {
             setIsLoadingAudio(false);
@@ -359,7 +382,7 @@ export function StoryBookPanel({
         closingAudioRef.current = null;
       }
     };
-  }, [currentPage, isVoiceEnabled, isPlaying, audioMap, storyPages, character, storyTitle]);
+  }, [currentPage, isVoiceEnabled, isPlaying, audioMap, storyPages, character, storyTitle, currentPage?.audio_url]);
 
   // 오디오 정지 함수 (외부에서 호출 가능하도록)
   const stopAudio = () => {

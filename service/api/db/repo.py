@@ -176,3 +176,20 @@ class AudioCacheRepository:
         grid_out = await bucket.open_download_stream(ObjectId(file_id))
         audio_data = await grid_out.read()
         return audio_data
+    
+    async def find_audio_in_gridfs(self, character_id: str, story_id: str, page_num: int) -> Optional[str]:
+        """GridFS에서 메타데이터로 오디오 파일 찾기 (audio_cache 없이도 작동)"""
+        # GridFS files 컬렉션에서 직접 검색
+        files_collection = self.db["fs.files"]
+        
+        query = {
+            "metadata.character_id": character_id,
+            "metadata.story_id": story_id,
+            "metadata.page": page_num
+        }
+        
+        file_doc = await files_collection.find_one(query)
+        
+        if file_doc and "_id" in file_doc:
+            return str(file_doc["_id"])
+        return None

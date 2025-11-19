@@ -1328,7 +1328,7 @@ async def check_story_audio_files(story_id: str, character_id: str = Query(...))
     existing_audio = []
     
     for page in pages:
-        # MongoDB에서 캐시 확인
+        # 먼저 audio_cache 컬렉션에서 확인
         cache = await audio_cache_repo.find_cache_by_page(
             character_id, 
             story_id, 
@@ -1342,6 +1342,36 @@ async def check_story_audio_files(story_id: str, character_id: str = Query(...))
                 "text": page.text,
                 "audio_url": audio_url
             })
+        else:
+            # audio_cache에 없으면 GridFS에서 직접 찾기
+            gridfs_file_id = await audio_cache_repo.find_audio_in_gridfs(
+                character_id,
+                story_id,
+                page.page
+            )
+            
+            if gridfs_file_id:
+                audio_url = f"/cache/gridfs/{gridfs_file_id}"
+                existing_audio.append({
+                    "page": page.page,
+                    "text": page.text,
+                    "audio_url": audio_url
+                })
+                # audio_cache에도 저장 (다음번에는 빠르게 찾을 수 있도록)
+                try:
+                    cache_doc = AudioCacheDB(
+                        character_id=character_id,
+                        story_id=story_id,
+                        chunk_index=page.page,
+                        audio_file_id=gridfs_file_id,
+                        generated_at=datetime.now()
+                    )
+                    await audio_cache_repo.save_cache(cache_doc)
+                    print(f"✅ Page {page.page} metadata synced to audio_cache")
+                except Exception as sync_error:
+                    # 중복 저장 시도 시 무시 (이미 다른 요청이 저장했을 수 있음)
+                    if "E11000" not in str(sync_error) and "duplicate" not in str(sync_error).lower():
+                        print(f"⚠️ Failed to sync page {page.page} to audio_cache: {sync_error}")
     
     return {
         "story_id": story_id,
