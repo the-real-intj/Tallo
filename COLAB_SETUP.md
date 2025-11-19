@@ -108,7 +108,10 @@ print(f"GPU 이름: {torch.cuda.get_device_name(0) if torch.cuda.is_available() 
 !pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cu118
 !pip install -q transformers huggingface-hub soundfile
 !pip install -q phonemizer inflect kanjize sudachipy sudachidict-full
-!pip install -q pyngrok
+!pip install -q pyngrok motor pymongo
+
+# espeak-ng 설치 (phonemizer에 필요)
+!apt-get update -qq && apt-get install -y -qq espeak-ng
 
 print("✅ 패키지 설치 완료")
 

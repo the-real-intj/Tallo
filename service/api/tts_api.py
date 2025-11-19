@@ -55,13 +55,55 @@ except ImportError as e:
 
 # torch.compile 비활성화 (Windows 컴파일러 없음)
 import torch._dynamo
+import sys
 torch._dynamo.config.suppress_errors = True
 os.environ["TORCHDYNAMO_DISABLE"] = "1"
 
-# espeak 경로 설정 (Windows)
-os.environ["PATH"] = r"C:\Program Files\eSpeak NG" + os.pathsep + os.environ["PATH"]
-os.environ["PHONEMIZER_ESPEAK_PATH"] = r"C:\Program Files\eSpeak NG\espeak-ng.exe"
-os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = r"C:\Program Files\eSpeak NG\libespeak-ng.dll"
+# espeak 경로 설정 (플랫폼별)
+# 환경 변수가 이미 설정되어 있으면 덮어쓰지 않음 (Colab 등에서 미리 설정한 경우)
+if "PHONEMIZER_ESPEAK_PATH" not in os.environ:
+    if sys.platform == "darwin":
+        # macOS
+        os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = "/opt/homebrew/lib/libespeak-ng.dylib"
+        # espeak-ng는 보통 PATH에 있음
+    else:
+        # Linux (Colab 포함)
+        # espeak-ng는 보통 /usr/bin/espeak-ng에 설치됨
+        espeak_paths = [
+            "/usr/bin/espeak-ng",
+            "/usr/local/bin/espeak-ng",
+            "espeak-ng"  # PATH에 있는 경우
+        ]
+        library_paths = [
+            "/usr/lib/x86_64-linux-gnu/libespeak-ng.so.1",
+            "/usr/lib/libespeak-ng.so.1",
+            "/usr/local/lib/libespeak-ng.so.1"
+        ]
+        
+        # espeak-ng 실행 파일 찾기
+        import shutil
+        espeak_found = None
+        for path in espeak_paths:
+            if path == "espeak-ng":
+                if shutil.which("espeak-ng"):
+                    espeak_found = "espeak-ng"
+                    break
+            elif os.path.exists(path):
+                espeak_found = path
+                break
+        
+        if espeak_found:
+            os.environ["PHONEMIZER_ESPEAK_PATH"] = espeak_found
+        
+        # 라이브러리 찾기
+        library_found = None
+        for lib_path in library_paths:
+            if os.path.exists(lib_path):
+                library_found = lib_path
+                break
+        
+        if library_found:
+            os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = library_found
 
 # ==================== 설정 ====================
 app = FastAPI(
