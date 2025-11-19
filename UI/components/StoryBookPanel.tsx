@@ -87,11 +87,26 @@ export function StoryBookPanel({
   // 페이지가 바뀔 때마다 미리 생성된 오디오 재생
   useEffect(() => {
     const playPageAudio = async () => {
+      console.log('🎵 playPageAudio 호출:', {
+        isVoiceEnabled,
+        isPlaying,
+        currentPage: currentPage?.page,
+        lastReadPage: lastReadPageRef.current,
+        hasAudioMap: Object.keys(audioMap).length > 0,
+        audioMapPages: Object.keys(audioMap),
+      });
+
       // 음성이 꺼져있거나, 재생 중이 아니거나, 현재 페이지가 없으면 재생 안 함
-      if (!isVoiceEnabled || !isPlaying || !currentPage) return;
+      if (!isVoiceEnabled || !isPlaying || !currentPage) {
+        console.log('⏭️ 오디오 재생 조건 미충족');
+        return;
+      }
 
       // 이미 읽은 페이지면 무시
-      if (currentPage.page === lastReadPageRef.current) return;
+      if (currentPage.page === lastReadPageRef.current) {
+        console.log('⏭️ 이미 읽은 페이지:', currentPage.page);
+        return;
+      }
 
       // 이전 오디오 정리
       if (audioRef.current) {
@@ -103,7 +118,7 @@ export function StoryBookPanel({
         setIsLoadingAudio(true);
         lastReadPageRef.current = currentPage.page;
 
-        let audioUrl: string;
+        let audioUrl: string | null = null;
 
         // MongoDB 스토리의 audio_url이 있으면 우선 사용
         if (currentPage.audio_url) {
@@ -113,34 +128,39 @@ export function StoryBookPanel({
           } else {
             audioUrl = currentPage.audio_url;
           }
+          console.log('📋 페이지 audio_url 사용:', audioUrl);
         } 
         // 미리 생성된 오디오 맵에서 찾기
         else if (audioMap[currentPage.page]) {
           audioUrl = audioMap[currentPage.page];
+          console.log('📋 audioMap에서 찾음:', audioUrl);
         } 
+        
         // 둘 다 없으면 대기
-        else {
+        if (!audioUrl) {
           console.log(`⏳ 페이지 ${currentPage.page} 오디오 생성 중...`);
           setIsLoadingAudio(false);
           return;
         }
 
+        console.log(`🔊 페이지 ${currentPage.page} 오디오 재생 시작:`, audioUrl);
         const audio = new Audio(audioUrl);
         audioRef.current = audio;
 
         audio.onended = () => {
+          console.log(`✅ 페이지 ${currentPage.page} 재생 완료`);
           setIsLoadingAudio(false);
         };
 
         audio.onerror = (error) => {
-          console.error('오디오 재생 실패:', error);
+          console.error(`❌ 페이지 ${currentPage.page} 오디오 재생 실패:`, error, audioUrl);
           setIsLoadingAudio(false);
         };
 
         await audio.play();
-        console.log(`🔊 페이지 ${currentPage.page} 재생 중`);
+        console.log(`🎶 페이지 ${currentPage.page} 재생 중`);
       } catch (error) {
-        console.error('오디오 재생 실패:', error);
+        console.error('❌ 오디오 재생 실패:', error);
         setIsLoadingAudio(false);
       }
     };
