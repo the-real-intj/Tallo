@@ -4,7 +4,7 @@ Zonos Multi-Character TTS API Server
 """
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
+import soundfile as sf  # torchaudio 버그 우회용
 
 from zonos.model import Zonos
 from zonos.conditioning import make_cond_dict
@@ -34,19 +35,27 @@ except ImportError:
     OPENAI_AVAILABLE = False
     print("⚠️ OpenAI 패키지가 설치되지 않았습니다. LLM 기능을 사용하려면 'pip install openai'를 실행하세요.")
 
-# MongoDB 지원
+# MongoDB 지원 (db 폴더 사용)
 try:
-    from pymongo import MongoClient
-    from pymongo.errors import ConnectionFailure
+    from db.db_client import connect_to_mongo, close_mongo_connection, get_database, get_gridfs
+    from db.repo import CharacterRepository, StorybookRepository, AudioCacheRepository
+    from db.model import CharacterDB, StorybookDB, AudioCacheDB
+    from bson import ObjectId
     MONGODB_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     MONGODB_AVAILABLE = False
-    print("⚠️ MongoDB 패키지가 설치되지 않았습니다. MongoDB 기능을 사용하려면 'pip install pymongo'를 실행하세요.")
+    print(f"⚠️ MongoDB 모듈을 불러올 수 없습니다: {e}")
+    print("⚠️ MongoDB 기능을 사용하려면 'pip install motor pymongo'를 실행하세요.")
 
 # torch.compile 비활성화 (Windows 컴파일러 없음)
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
 os.environ["TORCHDYNAMO_DISABLE"] = "1"
+
+# espeak 경로 설정 (Windows)
+os.environ["PATH"] = r"C:\Program Files\eSpeak NG" + os.pathsep + os.environ["PATH"]
+os.environ["PHONEMIZER_ESPEAK_PATH"] = r"C:\Program Files\eSpeak NG\espeak-ng.exe"
+os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = r"C:\Program Files\eSpeak NG\libespeak-ng.dll"
 
 # ==================== 설정 ====================
 app = FastAPI(
@@ -78,10 +87,13 @@ CHARACTERS_DB = EMBEDDINGS_DIR / "characters.json"
 
 # 전역 변수
 model = None
-characters_db: Dict = {}
+characters_db: Dict = {}  # 로컬 캐릭터 DB (하위 호환)
 story_audio_cache: Dict[str, Dict[int, str]] = {}  # {character_id: {page_num: audio_path}}
-mongodb_client = None
-mongodb_db = None
+
+# Repository 인스턴스 (startup에서 초기화)
+character_repo: Optional[CharacterRepository] = None
+storybook_repo: Optional[StorybookRepository] = None
+audio_cache_repo: Optional[AudioCacheRepository] = None
 
 # ==================== 데이터 모델 ====================
 
@@ -103,22 +115,16 @@ class CharacterInfo(BaseModel):
     created_at: str
     reference_audio: Optional[str] = None
 
-class CreateCharacterRequest(BaseModel):
-    """캐릭터 생성 요청"""
-    name: str
-    description: Optional[str] = None
-    language: str = "ko"  # 한국어 기본값
+class PreGenerateStoryRequest(BaseModel):
+    """동화책 전체 TTS 미리 생성 요청"""
+    character_id: str
+    pages: List[Dict]  # [{page: 1, text: "..."}, ...]
 
 class StoryPage(BaseModel):
     """동화 페이지 정보"""
     page: int
     text: str
     audio_url: Optional[str] = None  # 페이지별 오디오 파일 URL
-
-class PreGenerateStoryRequest(BaseModel):
-    """동화책 전체 TTS 미리 생성 요청"""
-    character_id: str
-    pages: List[Dict]  # [{page: 1, text: "..."}, ...]
 
 class LLMChatRequest(BaseModel):
     """LLM 채팅 요청"""
@@ -132,12 +138,6 @@ class LLMChatResponse(BaseModel):
     """LLM 채팅 응답"""
     text: str
     audio_url: Optional[str] = None  # TTS 생성된 오디오 URL
-
-class StoryPage(BaseModel):
-    """동화 페이지 정보"""
-    page: int
-    text: str
-    audio_url: Optional[str] = None  # 페이지별 오디오 파일 URL
 
 class StoryInfo(BaseModel):
     """동화 정보 (MongoDB)"""
@@ -216,6 +216,7 @@ def format_datetime_to_string(dt) -> Optional[str]:
 def split_story_into_pages(text: str, sentences_per_page: int = 2) -> List[StoryPage]:
     """
     동화 텍스트를 페이지로 나누기 (1-2문장씩)
+    Repository의 chunk_text와 다르게 문장 단위로 분할 (하위 호환 유지)
     
     Args:
         text: 전체 동화 텍스트
@@ -269,12 +270,87 @@ def split_story_into_pages(text: str, sentences_per_page: int = 2) -> List[Story
     
     return pages
 
+def calculate_max_tokens(text_length: int) -> int:
+    """텍스트 길이에 따라 적절한 max_tokens 계산"""
+    if text_length < 10:
+        return 300
+    elif text_length < 20:
+        return 500
+    elif text_length < 50:
+        return 800
+    elif text_length < 100:
+        return 1200
+    else:
+        return 86 * 30
+
+def save_audio_file(wavs: torch.Tensor, sampling_rate: int, output_path: Path):
+    """오디오 파일 저장 (torchaudio 버그 우회)"""
+    sf.write(str(output_path), wavs[0].squeeze(0).numpy(), sampling_rate)
+
+def generate_tts_audio(text: str, speaker_embedding: torch.Tensor, language: str = "ko", 
+                       speaking_rate: float = 15.0, pitch_std: float = 30.0,
+                       emotion: Optional[str] = None) -> torch.Tensor:
+    """TTS 오디오 생성"""
+    cond_dict = make_cond_dict(
+        text=text,
+        speaker=speaker_embedding,
+        language=language,
+        speaking_rate=speaking_rate,
+        pitch_std=pitch_std
+    )
+    
+    # 감정 추가 (선택적)
+    if emotion:
+        emotion_map = {
+            "happy": "happiness", "happiness": "happiness",
+            "sad": "sadness", "sadness": "sadness",
+            "angry": "anger", "anger": "anger",
+            "fear": "fear"
+        }
+        emotion_key = emotion_map.get(emotion.lower())
+        if emotion_key:
+            cond_dict[emotion_key] = 0.7
+    
+    conditioning = model.prepare_conditioning(cond_dict)
+    
+    with torch.no_grad():
+        max_tokens = calculate_max_tokens(len(text))
+        codes = model.generate(
+            conditioning,
+            max_new_tokens=max_tokens,
+            sampling_params={"min_p": 0.1, "temperature": 1.0}
+        )
+        return model.autoencoder.decode(codes).cpu()
+
+def check_mongodb_available():
+    """MongoDB 연결 확인"""
+    if not MONGODB_AVAILABLE or storybook_repo is None:
+        raise HTTPException(
+            status_code=500,
+            detail="MongoDB가 연결되지 않았습니다. MONGO_URI 환경 변수를 설정하세요."
+        )
+
+def storybookdb_to_storyinfo(story_db: StorybookDB) -> StoryInfo:
+    """StorybookDB를 StoryInfo로 변환"""
+    pages = split_story_into_pages(story_db.content)
+    title = story_db.filename.replace(".txt", "") if story_db.filename else "제목 없음"
+    
+    return StoryInfo(
+        id=str(story_db.id),
+        title=title,
+        text=story_db.content,
+        pages=pages,
+        audio_url=None,
+        character_id=None,
+        created_at=story_db.uploadedAt.isoformat() if story_db.uploadedAt else None
+    )
+
 # ==================== 시작/종료 이벤트 ====================
 
 @app.on_event("startup")
 async def startup_event():
     """서버 시작시 모델 로드"""
-    global model, mongodb_client, mongodb_db
+    global model, character_repo, storybook_repo, audio_cache_repo
     print("=" * 60)
     print("🚀 Zonos Multi-Character TTS API Server Starting...")
     print("=" * 60)
@@ -292,37 +368,46 @@ async def startup_event():
     
     print("\n📚 Loading characters database...")
     load_characters_db()
-    print(f"✅ Loaded {len(characters_db)} characters")
+    print(f"✅ Loaded {len(characters_db)} characters from local storage")
     
-    # MongoDB 연결
+    # MongoDB 연결 및 Repository 초기화
     if MONGODB_AVAILABLE:
-        print("\n🗄️ Connecting to MongoDB...")
         try:
-            mongodb_uri = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
-            mongodb_db_name = os.getenv("MONGODB_DB_NAME", "tallo")
+            print("\n🗄️ Connecting to MongoDB...")
+            await connect_to_mongo()
             
-            mongodb_client = MongoClient(mongodb_uri)
-            # 연결 테스트
-            mongodb_client.admin.command('ping')
-            mongodb_db = mongodb_client[mongodb_db_name]
-            print(f"✅ MongoDB connected: {mongodb_uri}")
-            print(f"✅ Database: {mongodb_db_name}")
-        except ConnectionFailure as e:
+            # Repository 인스턴스 생성
+            db = get_database()
+            if db:
+                character_repo = CharacterRepository(db)
+                storybook_repo = StorybookRepository(db)
+                audio_cache_repo = AudioCacheRepository(db)
+                print("✅ Repositories initialized")
+        except Exception as e:
             print(f"⚠️ MongoDB connection failed: {e}")
             print("⚠️ MongoDB features will be disabled")
-            mongodb_client = None
-            mongodb_db = None
-        except Exception as e:
-            print(f"⚠️ MongoDB error: {e}")
-            mongodb_client = None
-            mongodb_db = None
+            character_repo = None
+            storybook_repo = None
+            audio_cache_repo = None
     else:
-        print("\n⚠️ MongoDB not available (pymongo not installed)")
+        print("\n⚠️ MongoDB not available")
+        character_repo = None
+        storybook_repo = None
+        audio_cache_repo = None
     
     print("\n" + "=" * 60)
     print("✨ Server is ready!")
     print("📖 API Documentation: {IP주소:port}/docs")
     print("=" * 60 + "\n")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """서버 종료시 MongoDB 연결 종료"""
+    if MONGODB_AVAILABLE:
+        try:
+            await close_mongo_connection()
+        except Exception as e:
+            print(f"⚠️ Error closing MongoDB connection: {e}")
 
 # ==================== API 엔드포인트 ====================
 
@@ -405,9 +490,9 @@ async def create_character(
         torch.save(speaker_embedding, embedding_path)
         print(f"💾 Saved embedding: {embedding_path}")
         
-        # 6. 참조 오디오 저장 (선택적)
+        # 6. 참조 오디오 저장
         ref_audio_path = REFERENCE_DIR / f"{character_id}.wav"
-        torchaudio.save(str(ref_audio_path), wav, sampling_rate, backend="soundfile")
+        save_audio_file(wav, sampling_rate, ref_audio_path)
         
         # 7. 캐릭터 정보 저장
         character_info = {
@@ -479,71 +564,23 @@ async def generate_tts(request: TTSRequest):
         # 2. Speaker Embedding 로드
         speaker_embedding = load_character_embedding(request.character_id)
         
-        # 3. Conditioning 준비
-        # speaking_rate: 10=느림, 15=보통, 30=빠름 (phonemes per minute)
-        # pitch_std: 20-45=자연스러움, 60-150=표현력 있음
+        # 3. TTS 생성
         speaking_rate = request.speaking_rate if request.speaking_rate > 1.0 else 15.0
-        cond_dict = make_cond_dict(
+        print(f"🎤 Generating TTS for character '{request.character_id}'...")
+        wavs = generate_tts_audio(
             text=request.text,
-            speaker=speaker_embedding,
+            speaker_embedding=speaker_embedding,
             language=request.language,
             speaking_rate=speaking_rate,
-            pitch_std=30.0  # 자연스러운 억양
+            emotion=request.emotion
         )
         
-        # 감정 추가 (선택적)
-        if request.emotion:
-            # Zonos는 감정 제어를 위한 파라미터를 지원합니다
-            # 예: happiness, sadness, anger, fear
-            if request.emotion in ["happy", "happiness"]:
-                cond_dict["happiness"] = 0.7
-            elif request.emotion in ["sad", "sadness"]:
-                cond_dict["sadness"] = 0.7
-            elif request.emotion in ["angry", "anger"]:
-                cond_dict["anger"] = 0.7
-            elif request.emotion == "fear":
-                cond_dict["fear"] = 0.7
-        
-        conditioning = model.prepare_conditioning(cond_dict)
-        
-        # 4. TTS 생성
-        print(f"🎤 Generating TTS for character '{request.character_id}'...")
-        with torch.no_grad():
-            # 텍스트 길이에 따라 동적으로 조정
-            # 한글은 토큰을 더 많이 사용하므로 여유있게 설정
-            text_length = len(request.text)
-            if text_length < 10:
-                max_tokens = 300  # 매우 짧은 문장 (3-4초)
-            elif text_length < 20:
-                max_tokens = 500  # 짧은 문장 (5-6초)
-            elif text_length < 50:
-                max_tokens = 800  # 중간 문장 (8-10초)
-            elif text_length < 100:
-                max_tokens = 1200  # 긴 문장 (12-15초)
-            else:
-                max_tokens = 86 * 30  # 매우 긴 문장 (기본값)
-            
-            # 샘플링 파라미터 조정 (더 안정적인 생성)
-            codes = model.generate(
-                conditioning, 
-                max_new_tokens=max_tokens,
-                sampling_params={"min_p": 0.1, "temperature": 1.0}
-            )
-            wavs = model.autoencoder.decode(codes).cpu()
-        
-        # 5. 파일 저장
+        # 4. 파일 저장
         character_name = characters_db[request.character_id]["name"]
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{character_name}_{timestamp}.wav"
         output_path = OUTPUTS_DIR / filename
-
-        # TorchCodec 오류 방지: backend='soundfile' 사용
-        torchaudio.save(
-            str(output_path),
-            wavs[0],
-            model.autoencoder.sampling_rate,
-            backend="soundfile"
-        )
+        save_audio_file(wavs, model.autoencoder.sampling_rate, output_path)
         
         print(f"✅ TTS generated: {output_path}")
         return FileResponse(
@@ -583,23 +620,10 @@ async def batch_generate_tts(
     
     for idx, text in enumerate(texts):
         try:
-            cond_dict = make_cond_dict(
-                text=text,
-                speaker=speaker_embedding,
-                language=language
-            )
-            conditioning = model.prepare_conditioning(cond_dict)
-            
-            with torch.no_grad():
-                # 배치 처리도 길이 제한 적용
-                text_length = len(text)
-                max_tokens = min(400 if text_length < 50 else 600, 86 * 30)
-                codes = model.generate(conditioning, max_new_tokens=max_tokens)
-                wavs = model.autoencoder.decode(codes).cpu()
-            
+            wavs = generate_tts_audio(text, speaker_embedding, language)
             filename = f"{character_id}_batch_{idx}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
             output_path = OUTPUTS_DIR / filename
-            torchaudio.save(str(output_path), wavs[0], model.autoencoder.sampling_rate, backend="soundfile")
+            save_audio_file(wavs, model.autoencoder.sampling_rate, output_path)
             
             generated_files.append({
                 "index": idx,
@@ -682,24 +706,8 @@ async def pregenerate_story_audio(request: PreGenerateStoryRequest):
             else:
                 # TTS 생성
                 print(f"🎤 Generating page {page_num}...")
-                cond_dict = make_cond_dict(
-                    text=text,
-                    speaker=speaker_embedding,
-                    language="ko"
-                )
-                conditioning = model.prepare_conditioning(cond_dict)
-                
-                with torch.no_grad():
-                    codes = model.generate(conditioning)
-                    wavs = model.autoencoder.decode(codes).cpu()
-                
-                # 파일 저장
-                torchaudio.save(
-                    str(cached_file),
-                    wavs[0],
-                    model.autoencoder.sampling_rate,
-                    backend="soundfile"
-                )
+                wavs = generate_tts_audio(text, speaker_embedding, language="ko")
+                save_audio_file(wavs, model.autoencoder.sampling_rate, cached_file)
                 
                 audio_url = f"/cache/{character_id}/page_{page_num}.wav"
                 print(f"✅ Page {page_num} generated and cached")
@@ -735,7 +743,7 @@ async def pregenerate_story_audio(request: PreGenerateStoryRequest):
 @app.get("/cache/{character_id}/{story_id}/{filename}")
 async def get_cached_audio(character_id: str, story_id: str, filename: str):
     """
-    캐시된 오디오 파일 제공
+    캐시된 오디오 파일 제공 (story_id 포함)
     
     Args:
         character_id: 캐릭터 ID
@@ -746,22 +754,6 @@ async def get_cached_audio(character_id: str, story_id: str, filename: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Cached audio not found")
     return FileResponse(file_path, media_type="audio/wav")
-
-@app.get("/stories/audio/{character_id}")
-async def get_story_audio_map(character_id: str):
-    """
-    특정 캐릭터의 동화책 오디오 맵핑 조회
-    
-    Returns:
-        {page_num: audio_url} 딕셔너리
-    """
-    if character_id not in story_audio_cache:
-        return {"character_id": character_id, "pages": {}}
-    
-    return {
-        "character_id": character_id,
-        "pages": story_audio_cache[character_id]
-    }
 
 # ==================== LLM API 엔드포인트 ====================
 
@@ -832,51 +824,15 @@ async def chat_with_llm(request: LLMChatRequest):
             if request.character_id not in characters_db:
                 raise HTTPException(status_code=404, detail="Character not found")
             
-            # Speaker Embedding 로드
+            # Speaker Embedding 로드 및 TTS 생성
             speaker_embedding = load_character_embedding(request.character_id)
-            
-            # TTS 생성
-            # speaking_rate: 10=느림, 15=보통, 30=빠름
-            # pitch_std: 20-45=자연스러움
-            cond_dict = make_cond_dict(
-                text=llm_text,
-                speaker=speaker_embedding,
-                language="ko",
-                speaking_rate=15.0,
-                pitch_std=30.0
-            )
-            conditioning = model.prepare_conditioning(cond_dict)
-            
-            with torch.no_grad():
-                # LLM 응답 길이에 따라 토큰 수 제한
-                text_length = len(llm_text)
-                if text_length < 20:
-                    max_tokens = 500
-                elif text_length < 50:
-                    max_tokens = 800
-                elif text_length < 100:
-                    max_tokens = 1200
-                else:
-                    max_tokens = 86 * 30
-                
-                codes = model.generate(
-                    conditioning, 
-                    max_new_tokens=max_tokens,
-                    sampling_params={"min_p": 0.1, "temperature": 1.0}
-                )
-                wavs = model.autoencoder.decode(codes).cpu()
+            wavs = generate_tts_audio(llm_text, speaker_embedding, language="ko")
             
             # 파일 저장
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"llm_{request.character_id}_{timestamp}.wav"
             output_path = OUTPUTS_DIR / filename
-            
-            torchaudio.save(
-                str(output_path),
-                wavs[0],
-                model.autoencoder.sampling_rate,
-                backend="soundfile"
-            )
+            save_audio_file(wavs, model.autoencoder.sampling_rate, output_path)
             
             audio_url = f"/outputs/{filename}"
             print(f"✅ LLM + TTS generated: {output_path}")
@@ -896,39 +852,40 @@ async def debug_mongodb():
     """MongoDB 연결 상태 및 컬렉션 정보 디버깅"""
     debug_info = {
         "mongodb_available": MONGODB_AVAILABLE,
-        "mongodb_connected": mongodb_db is not None,
-        "database_name": os.getenv("MONGODB_DB_NAME", "not set"),
+        "mongodb_connected": storybook_repo is not None,
+        "database_name": os.getenv("MONGO_DB_NAME", "not set"),
         "collections": [],
         "stories_count": 0,
         "error": None
     }
     
     if not MONGODB_AVAILABLE:
-        debug_info["error"] = "pymongo not installed"
+        debug_info["error"] = "MongoDB modules not available"
         return debug_info
     
-    if mongodb_db is None:
+    if storybook_repo is None:
         debug_info["error"] = "MongoDB not connected"
         return debug_info
     
     try:
-        # 컬렉션 목록 가져오기
-        debug_info["collections"] = mongodb_db.list_collection_names()
-        
-        # "texts" 컬렉션 확인
-        if "texts" in debug_info["collections"]:
-            stories_collection = mongodb_db["texts"]
-            debug_info["stories_count"] = stories_collection.count_documents({})
+        db = get_database()
+        if db:
+            # 컬렉션 목록 가져오기
+            debug_info["collections"] = await db.list_collection_names()
             
-            # 샘플 문서 하나 가져오기
-            sample = stories_collection.find_one()
-            if sample:
-                debug_info["sample_doc"] = {
-                    "_id": str(sample.get("_id", "")),
-                    "filename": sample.get("filename", ""),
-                    "has_content": bool(sample.get("content", "")),
-                    "content_length": len(sample.get("content", "")) if sample.get("content") else 0
-                }
+            # "texts" 컬렉션 확인
+            if "texts" in debug_info["collections"]:
+                debug_info["stories_count"] = await storybook_repo.collection.count_documents({})
+                
+                # 샘플 문서 하나 가져오기
+                sample = await storybook_repo.collection.find_one()
+                if sample:
+                    debug_info["sample_doc"] = {
+                        "_id": str(sample.get("_id", "")),
+                        "filename": sample.get("filename", ""),
+                        "has_content": bool(sample.get("content", "")),
+                        "content_length": len(sample.get("content", "")) if sample.get("content") else 0
+                    }
     except Exception as e:
         debug_info["error"] = str(e)
     
@@ -945,50 +902,21 @@ async def list_stories(limit: int = 5):
     Returns:
         StoryListResponse: 동화 목록
     """
-    if not MONGODB_AVAILABLE or mongodb_db is None:
-        raise HTTPException(
-            status_code=500,
-            detail="MongoDB가 연결되지 않았습니다. MONGODB_URI 환경 변수를 설정하세요."
-        )
+    check_mongodb_available()
     
     try:
-        # MongoDB 컬렉션 이름: "texts" (실제 컬렉션 이름)
-        stories_collection = mongodb_db["texts"]
+        # Repository를 사용하여 동화 목록 조회
+        all_stories = await storybook_repo.get_all()
         
-        # 최대 5개로 제한
+        # 최대 5개로 제한 (최신순 정렬)
         limit = min(limit, 5)
+        sorted_stories = sorted(all_stories, key=lambda x: x.id, reverse=True)[:limit]
         
-        # MongoDB에서 동화 목록 가져오기
-        # created_at이 없을 수 있으므로 _id로 정렬 (최신순)
-        stories_cursor = stories_collection.find().limit(limit).sort("_id", -1)
-        stories_list = []
+        # StorybookDB를 StoryInfo로 변환
+        stories_list = [storybookdb_to_storyinfo(story_db) for story_db in sorted_stories]
         
-        for story_doc in stories_cursor:
-            # MongoDB 필드명: filename, content
-            filename = story_doc.get("filename", "")
-            # .txt 확장자 제거하여 제목으로 사용
-            title = filename.replace(".txt", "") if filename else "제목 없음"
-            content = story_doc.get("content", "")
-            
-            # 페이지로 나누기 (문장 단위)
-            pages = split_story_into_pages(content)
-            
-            # created_at 필드 처리 (datetime 객체를 문자열로 변환)
-            created_at_raw = story_doc.get("uploadedAt") or story_doc.get("created_at")
-            created_at_str = format_datetime_to_string(created_at_raw)
-            
-            story_info = StoryInfo(
-                id=str(story_doc.get("_id", "")),
-                title=title,
-                text=content,  # 전체 텍스트 (하위 호환)
-                pages=pages,  # 페이지별로 나눈 텍스트
-                audio_url=story_doc.get("audio_url"),
-                character_id=story_doc.get("character_id"),
-                created_at=created_at_str
-            )
-            stories_list.append(story_info)
-        
-        total = stories_collection.count_documents({})
+        # 전체 개수
+        total = len(all_stories)
         
         return StoryListResponse(
             stories=stories_list,
@@ -1010,96 +938,18 @@ async def get_story(story_id: str):
     Returns:
         StoryInfo: 동화 정보
     """
-    if not MONGODB_AVAILABLE or mongodb_db is None:
-        raise HTTPException(
-            status_code=500,
-            detail="MongoDB가 연결되지 않았습니다."
-        )
+    check_mongodb_available()
     
     try:
-        from bson import ObjectId
-        stories_collection = mongodb_db["texts"]
-        
-        story_doc = stories_collection.find_one({"_id": ObjectId(story_id)})
-        
-        if not story_doc:
+        story_db = await storybook_repo.get_by_id(story_id)
+        if not story_db:
             raise HTTPException(status_code=404, detail="Story not found")
-        
-        filename = story_doc.get("filename", "")
-        title = filename.replace(".txt", "") if filename else "제목 없음"
-        content = story_doc.get("content", "")
-        pages = split_story_into_pages(content)
-        
-        # created_at 필드 처리 (datetime 객체를 문자열로 변환)
-        created_at_raw = story_doc.get("uploadedAt") or story_doc.get("created_at")
-        created_at_str = format_datetime_to_string(created_at_raw)
-        
-        return StoryInfo(
-            id=str(story_doc.get("_id", "")),
-            title=title,
-            text=content,
-            pages=pages,
-            audio_url=story_doc.get("audio_url"),
-            character_id=story_doc.get("character_id"),
-            created_at=created_at_str
-        )
-        
+        return storybookdb_to_storyinfo(story_db)
     except HTTPException:
         raise
     except Exception as e:
         print(f"❌ Error fetching story: {e}")
         raise HTTPException(status_code=500, detail=f"동화 조회 중 오류: {str(e)}")
-
-@app.get("/stories/{story_id}/audio")
-async def get_story_audio(story_id: str):
-    """
-    동화의 미리 생성된 오디오 파일 재생
-    
-    Args:
-        story_id: 동화 ID
-        
-    Returns:
-        FileResponse: 오디오 파일
-    """
-    if not MONGODB_AVAILABLE or mongodb_db is None:
-        raise HTTPException(
-            status_code=500,
-            detail="MongoDB가 연결되지 않았습니다."
-        )
-    
-    try:
-        from bson import ObjectId
-        stories_collection = mongodb_db["stories"]
-        
-        story_doc = stories_collection.find_one({"_id": ObjectId(story_id)})
-        
-        if not story_doc:
-            raise HTTPException(status_code=404, detail="Story not found")
-        
-        audio_url = story_doc.get("audio_url")
-        if not audio_url:
-            raise HTTPException(status_code=404, detail="Audio file not found for this story")
-        
-        # audio_url이 상대 경로면 절대 경로로 변환
-        if audio_url.startswith("/"):
-            audio_path = BASE_DIR / audio_url.lstrip("/")
-        else:
-            audio_path = Path(audio_url)
-        
-        if not audio_path.exists():
-            raise HTTPException(status_code=404, detail="Audio file not found")
-        
-        return FileResponse(
-            audio_path,
-            media_type="audio/wav",
-            filename=f"story_{story_id}.wav"
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Error fetching story audio: {e}")
-        raise HTTPException(status_code=500, detail=f"오디오 파일 조회 중 오류: {str(e)}")
 
 @app.post("/stories/{story_id}/chat", response_model=LLMChatResponse)
 async def story_chat(story_id: str, request: LLMChatRequest):
@@ -1129,128 +979,57 @@ async def pregenerate_story_pages_audio(story_id: str, character_id: str = Form(
     Returns:
         생성된 페이지별 오디오 정보
     """
-    if not MONGODB_AVAILABLE or mongodb_db is None:
-        raise HTTPException(
-            status_code=500,
-            detail="MongoDB가 연결되지 않았습니다."
-        )
+    check_mongodb_available()
     
-    try:
-        from bson import ObjectId
-        stories_collection = mongodb_db["texts"]
-        
-        story_doc = stories_collection.find_one({"_id": ObjectId(story_id)})
-        if not story_doc:
-            raise HTTPException(status_code=404, detail="Story not found")
-        
-        # 캐릭터 확인
-        if character_id not in characters_db:
-            raise HTTPException(status_code=404, detail="Character not found")
-        
-        # Speaker Embedding 로드
-        speaker_embedding = load_character_embedding(character_id)
-        
-        # 동화 텍스트를 페이지로 나누기
-        content = story_doc.get("content", "")
-        pages = split_story_into_pages(content)
-        
-        # 캐릭터별, 스토리별 캐시 디렉토리 생성 (실제 저장 경로: cache/{character_id}/{story_id}/page_X.wav)
-        cache_dir = CACHE_DIR / character_id / story_id
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        
-        generated_pages = []
-        
-        print(f"🎤 Pre-generating audio for story '{story_id}' ({len(pages)} pages)...")
-        
-        for page in pages:
-            try:
-                # 페이지별 오디오 파일 경로
-                audio_filename = f"page_{page.page}.wav"
-                audio_path = cache_dir / audio_filename
-                
-                # 이미 생성된 파일이 있으면 스킵
-                if audio_path.exists():
-                    print(f"✅ Page {page.page} already exists, skipping...")
-                    audio_url = f"/cache/{character_id}/{story_id}/{audio_filename}"
-                    generated_pages.append({
-                        "page": page.page,
-                        "text": page.text,
-                        "audio_url": audio_url
-                    })
-                    continue
-                
-                # TTS 생성
-                print(f"🎤 Generating audio for page {page.page}...")
-                cond_dict = make_cond_dict(
-                    text=page.text,
-                    speaker=speaker_embedding,
-                    language="ko",
-                    speaking_rate=15.0,
-                    pitch_std=30.0
-                )
-                conditioning = model.prepare_conditioning(cond_dict)
-                
-                with torch.no_grad():
-                    text_length = len(page.text)
-                    if text_length < 20:
-                        max_tokens = 500
-                    elif text_length < 50:
-                        max_tokens = 800
-                    elif text_length < 100:
-                        max_tokens = 1200
-                    else:
-                        max_tokens = 86 * 30
-                    
-                    codes = model.generate(
-                        conditioning,
-                        max_new_tokens=max_tokens,
-                        sampling_params={"min_p": 0.1, "temperature": 1.0}
-                    )
-                    wavs = model.autoencoder.decode(codes).cpu()
-                
-                # 파일 저장
-                torchaudio.save(
-                    str(audio_path),
-                    wavs[0],
-                    model.autoencoder.sampling_rate,
-                    backend="soundfile"
-                )
-                
+    # 동화 및 캐릭터 확인
+    story_db = await storybook_repo.get_by_id(story_id)
+    if not story_db:
+        raise HTTPException(status_code=404, detail="Story not found")
+    if character_id not in characters_db:
+        raise HTTPException(status_code=404, detail="Character not found")
+    
+    speaker_embedding = load_character_embedding(character_id)
+    pages = split_story_into_pages(story_db.content)
+    cache_dir = CACHE_DIR / character_id / story_id
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    
+    generated_pages = []
+    print(f"🎤 Pre-generating audio for story '{story_id}' ({len(pages)} pages)...")
+    
+    for page in pages:
+        try:
+            audio_filename = f"page_{page.page}.wav"
+            audio_path = cache_dir / audio_filename
+            
+            if audio_path.exists():
+                print(f"✅ Page {page.page} already exists, skipping...")
                 audio_url = f"/cache/{character_id}/{story_id}/{audio_filename}"
-                generated_pages.append({
-                    "page": page.page,
-                    "text": page.text,
-                    "audio_url": audio_url
-                })
+            else:
+                print(f"🎤 Generating audio for page {page.page}...")
+                wavs = generate_tts_audio(page.text, speaker_embedding, language="ko")
+                save_audio_file(wavs, model.autoencoder.sampling_rate, audio_path)
+                audio_url = f"/cache/{character_id}/{story_id}/{audio_filename}"
+                print(f"✅ Page {page.page} audio generated")
                 
-                print(f"✅ Page {page.page} audio generated: {audio_path}")
-                
-            except Exception as e:
-                print(f"❌ Error generating page {page.page}: {e}")
-                generated_pages.append({
-                    "page": page.page,
-                    "text": page.text,
-                    "error": str(e)
-                })
-        
-        # MongoDB에 페이지별 오디오 URL 업데이트 (선택적)
-        # stories_collection.update_one(
-        #     {"_id": ObjectId(story_id)},
-        #     {"$set": {"pages_audio": generated_pages}}
-        # )
-        
-        return {
-            "story_id": story_id,
-            "character_id": character_id,
-            "total_pages": len(pages),
-            "generated_pages": generated_pages
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Error pregenerating story audio: {e}")
-        raise HTTPException(status_code=500, detail=f"오디오 생성 중 오류: {str(e)}")
+            generated_pages.append({
+                "page": page.page,
+                "text": page.text,
+                "audio_url": audio_url
+            })
+        except Exception as e:
+            print(f"❌ Error generating page {page.page}: {e}")
+            generated_pages.append({
+                "page": page.page,
+                "text": page.text,
+                "error": str(e)
+            })
+    
+    return {
+        "story_id": story_id,
+        "character_id": character_id,
+        "total_pages": len(pages),
+        "generated_pages": generated_pages
+    }
 
 @app.get("/stories/{story_id}/check-audio")
 async def check_story_audio_files(story_id: str, character_id: str = Query(...)):
@@ -1264,65 +1043,36 @@ async def check_story_audio_files(story_id: str, character_id: str = Query(...))
     Returns:
         생성된 오디오 파일 목록
     """
-    try:
-        from bson import ObjectId
-        if not MONGODB_AVAILABLE or mongodb_db is None:
-            raise HTTPException(status_code=500, detail="MongoDB가 연결되지 않았습니다.")
-        
-        stories_collection = mongodb_db["texts"]
-        
-        story_doc = stories_collection.find_one({"_id": ObjectId(story_id)})
-        if not story_doc:
-            raise HTTPException(status_code=404, detail="Story not found")
-        
-        # 동화 텍스트를 페이지로 나누기
-        content = story_doc.get("content", "")
-        pages = split_story_into_pages(content)
-        
-        # 캐릭터별, 스토리별 캐시 디렉토리 확인 (실제 저장 경로: cache/{character_id}/{story_id}/page_X.wav)
-        cache_dir = CACHE_DIR / character_id / story_id
-        existing_audio = []
-        
-        for page in pages:
-            audio_filename = f"page_{page.page}.wav"
-            audio_path = cache_dir / audio_filename
-            
-            if audio_path.exists():
-                audio_url = f"/cache/{character_id}/{story_id}/{audio_filename}"
-                existing_audio.append({
-                    "page": page.page,
-                    "text": page.text,
-                    "audio_url": audio_url
-                })
-        
-        return {
-            "story_id": story_id,
-            "character_id": character_id,
-            "total_pages": len(pages),
-            "existing_audio_count": len(existing_audio),
-            "existing_audio": existing_audio,
-            "all_audio_exists": len(existing_audio) == len(pages)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Error checking story audio: {e}")
-        raise HTTPException(status_code=500, detail=f"오디오 확인 중 오류: {str(e)}")
-
-@app.get("/outputs/stories/{story_id}/{filename}")
-async def get_story_page_audio(story_id: str, filename: str):
-    """
-    동화 페이지별 오디오 파일 제공
+    check_mongodb_available()
     
-    Args:
-        story_id: 동화 ID
-        filename: 파일명 (예: page_1.wav)
-    """
-    file_path = OUTPUTS_DIR / "stories" / story_id / filename
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Audio file not found")
-    return FileResponse(file_path, media_type="audio/wav")
+    story_db = await storybook_repo.get_by_id(story_id)
+    if not story_db:
+        raise HTTPException(status_code=404, detail="Story not found")
+        
+    pages = split_story_into_pages(story_db.content)
+    cache_dir = CACHE_DIR / character_id / story_id
+    existing_audio = []
+    
+    for page in pages:
+        audio_filename = f"page_{page.page}.wav"
+        audio_path = cache_dir / audio_filename
+        
+        if audio_path.exists():
+            audio_url = f"/cache/{character_id}/{story_id}/{audio_filename}"
+            existing_audio.append({
+                "page": page.page,
+                "text": page.text,
+                "audio_url": audio_url
+            })
+    
+    return {
+        "story_id": story_id,
+        "character_id": character_id,
+        "total_pages": len(pages),
+        "existing_audio_count": len(existing_audio),
+        "existing_audio": existing_audio,
+        "all_audio_exists": len(existing_audio) == len(pages)
+    }
 
 # ==================== 메인 실행 ====================
 
