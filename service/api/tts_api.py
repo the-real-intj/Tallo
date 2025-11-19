@@ -383,7 +383,7 @@ async def startup_event():
             
             # Repository 인스턴스 생성
             db = get_database()
-            if db:
+            if db is not None:
                 character_repo = CharacterRepository(db)
                 storybook_repo = StorybookRepository(db)
                 audio_cache_repo = AudioCacheRepository(db)
@@ -874,7 +874,7 @@ async def debug_mongodb():
     
     try:
         db = get_database()
-        if db:
+        if db is not None:
             # 컬렉션 목록 가져오기
             debug_info["collections"] = await db.list_collection_names()
             
