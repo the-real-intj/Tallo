@@ -391,21 +391,15 @@ export interface PreGenerateResponse {
  */
 export async function pregenerateStoryAudio(
   characterId: string,
-  pages: Array<{ page: number; text: string }>
+  pages: Array<{ page: number; text: string }>,
+  storyId?: string
 ): Promise<PreGenerateResponse> {
   const response = await apiClient.post('/stories/pregenerate', {
     character_id: characterId,
+    story_id: storyId || null,
     pages: pages
   });
   return response.data;
-}
-
-/**
- * 캐시된 오디오 파일 URL 생성
- * GET /cache/{character_id}/{story_id}/{filename}
- */
-export function getCachedAudioUrl(characterId: string, storyId: string, filename: string): string {
-  return `${API_BASE_URL}/cache/${characterId}/${storyId}/${filename}`;
 }
 
 export default apiClient;

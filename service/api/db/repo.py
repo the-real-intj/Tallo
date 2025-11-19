@@ -96,6 +96,7 @@ class StorybookRepository:
 class AudioCacheRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.collection = db["audio_cache"]
+        self.db = db
     
     async def find_cache(self, character_id: str, story_id: str, chunk_index: int) -> Optional[AudioCacheDB]:
         """캐시된 오디오 찾기"""
@@ -106,7 +107,40 @@ class AudioCacheRepository:
         })
         return AudioCacheDB(**cache) if cache else None
     
+    async def find_cache_by_page(self, character_id: str, story_id: str, page_num: int) -> Optional[AudioCacheDB]:
+        """페이지 번호로 캐시 찾기"""
+        cache = await self.collection.find_one({
+            "character_id": character_id,
+            "story_id": story_id,
+            "chunk_index": page_num
+        })
+        return AudioCacheDB(**cache) if cache else None
+    
     async def save_cache(self, cache: AudioCacheDB) -> str:
-        """오디오 캐시 저장"""
+        """오디오 캐시 메타데이터 저장"""
         result = await self.collection.insert_one(cache.dict(by_alias=True, exclude={"id"}))
         return str(result.inserted_id)
+    
+    async def save_audio_to_gridfs(
+        self, 
+        audio_data: bytes, 
+        filename: str,
+        metadata: dict
+    ) -> str:
+        """오디오를 GridFS에 저장하고 file_id 반환"""
+        from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+        bucket = AsyncIOMotorGridFSBucket(self.db)
+        file_id = await bucket.upload_from_stream(
+            filename,
+            audio_data,
+            metadata=metadata
+        )
+        return str(file_id)
+    
+    async def load_audio_from_gridfs(self, file_id: str) -> bytes:
+        """GridFS에서 오디오 다운로드"""
+        from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+        bucket = AsyncIOMotorGridFSBucket(self.db)
+        grid_out = await bucket.open_download_stream(ObjectId(file_id))
+        audio_data = await grid_out.read()
+        return audio_data

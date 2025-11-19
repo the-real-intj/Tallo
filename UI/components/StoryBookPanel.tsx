@@ -12,6 +12,7 @@ interface StoryBookPanelProps {
   isVoiceEnabled?: boolean;
   character?: Character | null;
   storyPages?: StoryPage[];  // 전체 동화 페이지 추가
+  storyId?: string;  // 스토리 ID (GridFS 캐싱용)
   onNext: () => void;
   onPrevious: () => void;
   onAudioPregenerated?: (audioMap: Record<number, string>) => void;  // 미리 생성 완료 콜백
@@ -29,6 +30,7 @@ export function StoryBookPanel({
   isVoiceEnabled = false,
   character = null,
   storyPages = [],
+  storyId,
   onNext,
   onPrevious,
   onAudioPregenerated,
@@ -58,7 +60,8 @@ export function StoryBookPanel({
           storyPages.map(page => ({
             page: page.page,
             text: page.text
-          }))
+          })),
+          storyId  // story_id (선택)
         );
 
         // 오디오 URL 맵핑 생성
