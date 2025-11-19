@@ -124,9 +124,13 @@ export function StoryBookPanel({
       if (Object.keys(urls).length > 0) {
         setAudioMap(urls);
         onAudioPregenerated?.(urls);
+        // 오디오 URL이 새로 추가되면 lastReadPageRef 초기화하여 재실행 가능하게
+        if (currentPage && urls[currentPage.page] && !audioMap[currentPage.page]) {
+          lastReadPageRef.current = -1;
+        }
       }
     }
-  }, [storyPages]);
+  }, [storyPages, currentPage, audioMap]);
 
   // 페이지가 바뀔 때마다 미리 생성된 오디오 재생
   useEffect(() => {
@@ -134,7 +138,7 @@ export function StoryBookPanel({
       // 음성이 꺼져있거나, 재생 중이 아니거나, 현재 페이지가 없으면 재생 안 함
       if (!isVoiceEnabled || !isPlaying || !currentPage) return;
 
-      // 이미 읽은 페이지면 무시
+      // 이미 읽은 페이지면 무시 (lastReadPageRef 초기화로 재실행 가능)
       if (currentPage.page === lastReadPageRef.current) return;
 
       // 이전 오디오 정리
@@ -355,7 +359,7 @@ export function StoryBookPanel({
         closingAudioRef.current = null;
       }
     };
-  }, [currentPage, isVoiceEnabled, isPlaying, audioMap, character, storyPages, storyTitle]);
+  }, [currentPage, isVoiceEnabled, isPlaying, audioMap, storyPages, character, storyTitle]);
 
   // 오디오 정지 함수 (외부에서 호출 가능하도록)
   const stopAudio = () => {

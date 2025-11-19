@@ -82,14 +82,10 @@ export default function HomePage() {
       return;
     }
 
-    // MongoDB 스토리 재생
-    setIsPlaying(true);
-    setCurrentPage(1);
     setCurrentEmotion('happy');
-    
     addMessage('character', `${selectedStory.title} 이야기를 시작할게!`);
     
-    // 페이지별 오디오가 없으면 미리 생성
+    // 페이지별 오디오가 없으면 미리 생성 (오디오 준비 완료 후 재생 시작)
     if (selectedStory.pages && selectedStory.pages.length > 0 && isVoiceEnabled) {
       try {
         // 먼저 이미 생성된 오디오 파일이 있는지 확인
@@ -127,6 +123,10 @@ export default function HomePage() {
         addMessage('character', '오디오 생성에 실패했어요. 텍스트로 읽어드릴게요.');
       }
     }
+    
+    // 오디오 준비 완료 후 재생 시작
+    setCurrentPage(1);
+    setIsPlaying(true);
   };
 
   // 선택지 선택 (MongoDB 스토리는 단일 페이지이므로 사용 안 함)
