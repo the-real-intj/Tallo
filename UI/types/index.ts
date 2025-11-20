@@ -93,7 +93,7 @@ export interface AppState {
   setSelectedCharacter: (character: Character | null) => void;
   setSelectedStory: (story: Story | null) => void;
   setCurrentPage: (page: number) => void;
-  addMessage: (type: 'character' | 'user', text: string) => void;
+  addMessage: (type: 'character' | 'user', text: string) => number;
   clearMessages: () => void;
   setIsPlaying: (playing: boolean) => void;
   setCurrentEmotion: (emotion: Emotion) => void;

@@ -69,6 +69,11 @@ export default function HomePage() {
     setSelectedStory(story);
     setCurrentPage(1);
     setIsPlaying(false);
+    
+    // 동화책 선택 시 시작 메시지 추가 (TTS 자동 재생)
+    if (selectedCharacter) {
+      addMessage('character', `${story.title} 이야기를 시작할게!`);
+    }
   };
 
   // 이야기 시작
@@ -224,14 +229,20 @@ export default function HomePage() {
     await delay(100);
     setCurrentPage(1);
     
-    // 시작 메시지 추가 (TTS 재생 완료 후 onTTSComplete에서 동화 재생 시작)
-    // 현재 메시지 개수를 기준으로 새 메시지 ID 예상
-    const currentMessageCount = messages.length;
-    addMessage('character', `${selectedStory.title} 이야기를 시작할게!`);
-    // 새로 추가된 메시지의 ID는 (현재 최대 ID + 1) 또는 (currentMessageCount + 1)
-    // 메시지가 추가된 후 useEffect에서 확인하도록 함
-    startMessageIdRef.current = currentMessageCount + 1;
-    // setIsPlaying(true)는 onTTSComplete에서 호출됨
+    // 버튼 클릭 시 바로 1페이지부터 재생 시작
+    setIsPlaying(true);
+    isPlayingAudioRef.current = false; // 페이지 오디오 재생 가능
+    
+    setTimeout(() => {
+      if (selectedStory?.pages && selectedStory.pages.length > 0) {
+        console.log('🎵 동화 재생하기 버튼 클릭, 1페이지 오디오 재생 시작');
+        if ((window as any).playPageAudio) {
+          (window as any).playPageAudio(1);
+        } else {
+          console.warn('⚠️ playPageAudio 함수를 찾을 수 없음');
+        }
+      }
+    }, 300);
   };
 
 
@@ -240,7 +251,15 @@ export default function HomePage() {
     if (!selectedStory || !selectedStory.pages) return;
     
     if (currentPage < selectedStory.pages.length) {
-      setCurrentPage(currentPage + 1);
+      const nextPage = currentPage + 1;
+      setCurrentPage(nextPage);  // 1. 페이지 상태 업데이트
+      
+      // 2. 오디오 재생
+      if ((window as any).playPageAudio) {
+        (window as any).playPageAudio(nextPage);
+      } else {
+        console.warn('⚠️ playPageAudio 함수를 찾을 수 없음');
+      }
     }
   };
 
@@ -302,27 +321,6 @@ export default function HomePage() {
                 setSelectedStory(null);
               }}
               onTTSComplete={(messageId) => {
-                // 시작 메시지의 TTS 재생 완료 확인
-                const completedMessage = messages.find(m => m.id === messageId);
-                
-                // 시작 메시지 TTS 완료 → 동화 재생 시작
-                if (completedMessage && completedMessage.text.includes('이야기를 시작할게') && !isPlaying) {
-                  console.log('✅ 시작 메시지 TTS 완료, 동화 재생 시작');
-                  startMessageIdRef.current = null; // 초기화
-                  isPlayingAudioRef.current = false; // TTS 완료, 페이지 오디오 재생 가능
-                  setTimeout(() => {
-                    setIsPlaying(true);
-                    // 첫 번째 페이지 오디오 재생 시작
-                    if (selectedStory?.pages && selectedStory.pages.length > 0) {
-                      pendingPageAudioRef.current = 1;
-                      // StoryBookPanel에 재생 신호 전달
-                      if ((window as any).playPageAudio) {
-                        (window as any).playPageAudio(1);
-                      }
-                    }
-                  }, 300);
-                }
-                
                 // 마무리 메시지(2번째 대화 완료) TTS 완료 → 다음 페이지로 이동
                 if (closingMessageIdRef.current === messageId) {
                   console.log('✅ 마무리 메시지 TTS 완료, 다음 페이지로 이동');
@@ -380,7 +378,7 @@ export default function HomePage() {
                     });
                     
                     // LLM 응답 메시지 추가
-                    addMessage('character', response.text);
+                    const messageId = addMessage('character', response.text);
                     
                     // 대화 카운터 증가
                     const newCount = conversationCount + 1;
@@ -390,8 +388,7 @@ export default function HomePage() {
                     if (newCount >= 2) {
                       console.log(`✅ 2마디 대화 완료, 마무리 메시지 TTS 재생 대기`);
                       // 마무리 메시지 ID 추적 (TTS 완료 후 다음 페이지로 이동)
-                      const lastMessageId = messages.length > 0 ? Math.max(...messages.map(m => m.id)) : 0;
-                      closingMessageIdRef.current = lastMessageId + 1; // 방금 추가한 메시지의 ID
+                      closingMessageIdRef.current = messageId; // addMessage가 반환한 실제 메시지 ID 사용
                       
                       // 대화 카운터 초기화
                       conversationCountRef.current[currentPageNum] = 0;
@@ -533,8 +530,20 @@ export default function HomePage() {
                 conversationCountRef.current[page] = 0;
                 
                 try {
+                  // 전체 동화책 텍스트 합치기
+                  const fullStoryText = selectedStory.pages
+                    .map(p => p.text)
+                    .join(' ')
+                    .trim();
+                  
+                  // 등장인물 정보 추출 (텍스트에서 등장인물 이름 추출하거나, 백엔드에서 처리)
+                  // 현재는 빈 배열로 전달하고 백엔드에서 텍스트 분석하여 추출하도록 함
+                  const characters: string[] = [];
+                  
                   const questionResult = await generateQuestion({
                     page_text: pageData.text,
+                    full_story_text: fullStoryText,
+                    characters: characters,
                     character_id: selectedCharacter.voice,
                     character_name: selectedCharacter.name,
                     story_title: selectedStory.title,
@@ -557,12 +566,8 @@ export default function HomePage() {
               console.log(`⏭️ 페이지 ${page} 재생 완료, 다음 페이지로 이동`);
               const nextPage = page + 1;
               if (nextPage <= (selectedStory.pages?.length || 1)) {
-                // 다음 페이지 오디오 재생
-                if ((window as any).playPageAudio) {
-                  (window as any).playPageAudio(nextPage);
-                } else {
-                  handleNextPage();
-                }
+                // handleNextPage()가 페이지 상태 변경 + 오디오 재생 둘 다 처리
+                handleNextPage();
               }
             }
           }}

@@ -317,6 +317,8 @@ export async function chatWithLLMAndTTS(request: LLMChatRequest): Promise<LLMCha
  */
 export interface GenerateQuestionRequest {
   page_text: string;
+  full_story_text?: string;  // 전체 동화책 텍스트 (모든 페이지 텍스트 합친 것)
+  characters?: string[];  // 등장인물 목록
   character_id: string;
   character_name?: string;
   story_title?: string;
@@ -333,6 +335,17 @@ export async function generateQuestion(request: GenerateQuestionRequest): Promis
     if (request.story_title) {
       formData.append('story_title', request.story_title);
     }
+    // 전체 동화책 텍스트 전달
+    if (request.full_story_text) {
+      formData.append('full_story_text', request.full_story_text);
+    }
+    // 등장인물 정보 전달
+    if (request.characters && request.characters.length > 0) {
+      formData.append('characters', JSON.stringify(request.characters));
+    }
+    // 프롬프트 수정 지시 추가
+    const prompt_instruction = `동화의 등장인물을 기반으로 질문하되, 질문하는 캐릭터는 ${request.character_name || '캐릭터'}입니다.`;
+    formData.append('prompt_instruction', prompt_instruction);
     
     const response = await apiClient.post('/llm/generate-question', formData, {
       headers: {

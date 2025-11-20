@@ -50,6 +50,7 @@ export function StoryBookPanel({
   const blobUrlRef = useRef<string | null>(null);  // blob URL 추적용
   const lastReadPageRef = useRef<number>(-1);
   const hasPregeneratedRef = useRef(false);
+  const previousAudioMapRef = useRef<Record<number, string>>({});  // 이전 audioMap 추적용
   
   // 질문/답변 UI는 제거됨 (채팅창으로 이동)
 
@@ -143,12 +144,33 @@ export function StoryBookPanel({
       console.log(`🗺️ pagesToUse 전체:`, pagesToUse);
       
       if (Object.keys(urls).length > 0) {
+        // 이전 audioMap과 비교하여 실제로 새로 추가된 오디오만 감지
+        const previousMap = previousAudioMapRef.current;
+        const newlyAddedPages: number[] = [];
+        
+        Object.keys(urls).forEach(pageNumStr => {
+          const pageNum = parseInt(pageNumStr);
+          // 이전에 없었거나 URL이 변경된 경우만 새로 추가된 것으로 간주
+          if (!previousMap[pageNum] || previousMap[pageNum] !== urls[pageNum]) {
+            newlyAddedPages.push(pageNum);
+          }
+        });
+        
+        // audioMap 업데이트
         setAudioMap(urls);
+        previousAudioMapRef.current = urls;  // 이전 상태 저장
         onAudioPregenerated?.(urls);
-        // 오디오 URL이 새로 추가되면 lastReadPageRef 초기화하여 재실행 가능하게
-        if (currentPage && urls[currentPage.page]) {
-          console.log(`🔄 lastReadPageRef 초기화 (페이지 ${currentPage.page} 오디오 새로 추가)`);
-          lastReadPageRef.current = -1;
+        
+        // 실제로 새로 추가된 오디오가 있는 경우에만 lastReadPageRef 초기화
+        // 새로 추가된 페이지는 재생 가능하도록 lastReadPageRef에서 제외
+        if (newlyAddedPages.length > 0) {
+          console.log(`🔄 새로 추가된 오디오 페이지:`, newlyAddedPages);
+          // 새로 추가된 페이지 중 하나가 현재 lastReadPageRef에 해당하면 초기화
+          // (해당 페이지를 다시 재생할 수 있도록)
+          if (lastReadPageRef.current !== -1 && newlyAddedPages.includes(lastReadPageRef.current)) {
+            console.log(`🔄 lastReadPageRef 초기화 (페이지 ${lastReadPageRef.current} 오디오 새로 추가)`);
+            lastReadPageRef.current = -1;
+          }
         }
       } else {
         console.log(`⚠️ audioMap이 비어있음 - pagesToUse에 audio_url이 없음`);
@@ -157,7 +179,7 @@ export function StoryBookPanel({
     } else {
       console.log(`⚠️ pagesToUse가 비어있음`);
     }
-  }, [selectedStoryPages, storyPages, currentPage, API_BASE_URL]);
+  }, [selectedStoryPages, storyPages, API_BASE_URL]);
 
   // 페이지 오디오 재생 함수 (외부에서 호출 가능)
   const playPageAudio = async (pageNum?: number) => {
@@ -173,10 +195,16 @@ export function StoryBookPanel({
       return;
     }
 
-    // 음성이 꺼져있거나, 재생 중이 아니면 재생 안 함
-    if (!isVoiceEnabled || !isPlaying) {
-      console.log(`⏸️ 재생 조건 불만족: isVoiceEnabled=${isVoiceEnabled}, isPlaying=${isPlaying}`);
+    // 음성이 꺼져있으면 재생 안 함
+    if (!isVoiceEnabled) {
+      console.log(`⏸️ 재생 조건 불만족: isVoiceEnabled=${isVoiceEnabled}`);
       return;
+    }
+    
+    // isPlaying 체크는 제거 (외부에서 호출할 때는 이미 재생 가능한 상태)
+    // 하지만 디버깅을 위해 로그는 남김
+    if (!isPlaying) {
+      console.log(`⚠️ isPlaying=${isPlaying}이지만 재생 시도 (외부 호출)`);
     }
 
     // 이미 읽은 페이지면 무시 (단, audio_url이 새로 생겼으면 재실행)
@@ -209,13 +237,17 @@ export function StoryBookPanel({
         // 1. targetPageData.audio_url 우선 확인
         if (targetPageData.audio_url) {
           if (targetPageData.audio_url.startsWith('http')) {
-            // 이미 절대 URL
+            // 이미 절대 URL (Colab 서버)
+            audioUrl = targetPageData.audio_url;
+          } else if (targetPageData.audio_url.startsWith('/outputs/')) {
+            // 로컬 파일 경로 (Next.js API Route를 통해 제공)
+            // 상대 경로 그대로 사용 (Next.js가 처리)
             audioUrl = targetPageData.audio_url;
           } else if (targetPageData.audio_url.startsWith('/')) {
-            // 상대 경로면 API URL 추가
+            // 다른 상대 경로면 API URL 추가 (Colab 서버)
             audioUrl = `${API_BASE_URL}${targetPageData.audio_url}`;
           } else {
-            // 경로만 있으면 API URL 추가
+            // 경로만 있으면 API URL 추가 (Colab 서버)
             audioUrl = `${API_BASE_URL}/${targetPageData.audio_url}`;
           }
         }
