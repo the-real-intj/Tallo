@@ -10,7 +10,7 @@ import { StoryBookPanel } from '@/components/StoryBookPanel';
 import { ChoiceButtons } from '@/components/ChoiceButtons';
 import { delay } from '@/lib/utils';
 import type { Choice, Story } from '@/types';
-import { chatWithLLMAndTTS, pregenerateStoryPagesAudio, checkStoryAudioFiles } from '@/lib/api';
+import { chatWithLLMAndTTS, pregenerateStoryPagesAudio, checkStoryAudioFiles, API_BASE_URL } from '@/lib/api';
 
 /**
  * 메인 페이지
@@ -105,8 +105,15 @@ export default function HomePage() {
           updatedStoryPages = selectedStory.pages.map(page => {
             const existing = audioCheck.existing_audio.find(ea => ea.page === page.page);
             if (existing?.audio_url) {
-              console.log(`✅ 페이지 ${page.page} 오디오 URL:`, existing.audio_url);
-              return { ...page, audio_url: existing.audio_url };
+              // audio_url이 상대 경로면 API_BASE_URL 추가
+              let audioUrl = existing.audio_url;
+              if (audioUrl.startsWith('/')) {
+                audioUrl = `${API_BASE_URL}${audioUrl}`;
+              } else if (!audioUrl.startsWith('http')) {
+                audioUrl = `${API_BASE_URL}/${audioUrl}`;
+              }
+              console.log(`✅ 페이지 ${page.page} 오디오 URL:`, audioUrl);
+              return { ...page, audio_url: audioUrl };
             }
             return page;
           });
@@ -136,8 +143,15 @@ export default function HomePage() {
                 // 생성된 오디오 찾기
                 const generated = result.generated_pages?.find(gp => gp.page === page.page);
                 if (generated?.audio_url) {
-                  console.log(`✅ 생성된 페이지 ${page.page} 오디오 URL:`, generated.audio_url);
-                  return { ...page, audio_url: generated.audio_url };
+                  // audio_url이 상대 경로면 API_BASE_URL 추가
+                  let audioUrl = generated.audio_url;
+                  if (audioUrl.startsWith('/')) {
+                    audioUrl = `${API_BASE_URL}${audioUrl}`;
+                  } else if (!audioUrl.startsWith('http')) {
+                    audioUrl = `${API_BASE_URL}/${audioUrl}`;
+                  }
+                  console.log(`✅ 생성된 페이지 ${page.page} 오디오 URL:`, audioUrl);
+                  return { ...page, audio_url: audioUrl };
                 }
                 return page;
               });

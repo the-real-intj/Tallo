@@ -714,13 +714,13 @@ async def batch_generate_tts(
     
     return {"results": generated_files}
 
-@app.get("/outputs/{filename}")
+@app.get("/outputs/{filename:path}")
 async def get_output_file(filename: str):
     """
-    생성된 오디오 파일 다운로드
+    생성된 오디오 파일 다운로드 (캐시 파일 포함)
     
     Args:
-        filename: 파일 이름
+        filename: 파일 이름 또는 경로 (예: "cache/story_id/character_id/page_1.wav")
     """
     file_path = OUTPUTS_DIR / filename
     if not file_path.exists():
@@ -740,7 +740,7 @@ async def health_check():
 @app.post("/stories/pregenerate")
 async def pregenerate_story_audio(request: PreGenerateStoryRequest):
     """
-    동화책 전체 페이지의 TTS를 미리 생성하여 GridFS에 캐싱
+    동화책 전체 페이지의 TTS를 미리 생성하여 로컬 파일에 캐싱
     
     Args:
         request: character_id, story_id(선택), pages 리스트
@@ -751,16 +751,16 @@ async def pregenerate_story_audio(request: PreGenerateStoryRequest):
     character_id = request.character_id
     story_id = request.story_id or "default"  # story_id가 없으면 "default" 사용
     
-    # MongoDB 연결 확인
-    if not MONGODB_AVAILABLE or audio_cache_repo is None:
-        raise HTTPException(status_code=503, detail="MongoDB not available")
-    
     # 캐릭터 확인
     if character_id not in characters_db:
         raise HTTPException(status_code=404, detail="Character not found")
     
     # Speaker Embedding 로드
     speaker_embedding = load_character_embedding(character_id)
+    
+    # 캐시 디렉토리 생성
+    cache_dir = OUTPUTS_DIR / "cache" / story_id / character_id
+    cache_dir.mkdir(parents=True, exist_ok=True)
     
     generated_pages = []
     
@@ -771,75 +771,30 @@ async def pregenerate_story_audio(request: PreGenerateStoryRequest):
         text = page_data["text"]
         
         try:
-            # MongoDB에서 캐시 확인
-            cache = await audio_cache_repo.find_cache_by_page(
-                character_id, 
-                story_id, 
-                page_num
-            )
+            # 로컬 파일로 캐시 확인
+            filename = f"page_{page_num}.wav"
+            file_path = cache_dir / filename
             
-            if cache:
-                print(f"✅ Page {page_num} already cached in GridFS")
-                audio_url = f"/cache/gridfs/{cache.audio_file_id}"
+            if file_path.exists():
+                print(f"✅ Page {page_num} already cached: {file_path}")
+                audio_url = f"/outputs/cache/{story_id}/{character_id}/{filename}"
             else:
                 # TTS 생성
                 print(f"🎤 Generating page {page_num}...")
                 
                 # Race condition 방지: 저장 전에 다시 한 번 확인
-                cache_check = await audio_cache_repo.find_cache_by_page(
-                    character_id, 
-                    story_id, 
-                    page_num
-                )
-                if cache_check:
+                if file_path.exists():
                     print(f"✅ Page {page_num} was cached by another request, using existing")
-                    audio_url = f"/cache/gridfs/{cache_check.audio_file_id}"
+                    audio_url = f"/outputs/cache/{story_id}/{character_id}/{filename}"
                 else:
                     wavs = generate_tts_audio(text, speaker_embedding, language="ko")
                     sampling_rate = model.autoencoder.sampling_rate
                     
-                    # 오디오를 바이트로 변환
-                    audio_bytes = convert_audio_to_bytes(wavs, sampling_rate)
+                    # 로컬 파일로 저장
+                    save_audio_file(wavs, sampling_rate, file_path)
+                    print(f"✅ Page {page_num} audio saved to: {file_path}")
                     
-                    # GridFS에 저장
-                    filename = f"{character_id}_{story_id}_page_{page_num}.wav"
-                    file_id = await audio_cache_repo.save_audio_to_gridfs(
-                        audio_bytes,
-                        filename,
-                        metadata={
-                            "character_id": character_id,
-                            "story_id": story_id,
-                            "page": page_num
-                        }
-                    )
-                    
-                    # 메타데이터 저장 (중복 방지: 이미 있으면 에러 무시)
-                    try:
-                        cache_doc = AudioCacheDB(
-                            character_id=character_id,
-                            story_id=story_id,
-                            chunk_index=page_num,
-                            audio_file_id=file_id,
-                            generated_at=datetime.now()
-                        )
-                        await audio_cache_repo.save_cache(cache_doc)
-                        print(f"✅ Page {page_num} generated and cached in GridFS")
-                    except Exception as save_error:
-                        # 중복 저장 시도 시 (다른 요청이 이미 저장함)
-                        print(f"⚠️ Page {page_num} cache save conflict (likely duplicate), checking existing cache...")
-                        existing_cache = await audio_cache_repo.find_cache_by_page(
-                            character_id, 
-                            story_id, 
-                            page_num
-                        )
-                        if existing_cache:
-                            print(f"✅ Using existing cache for page {page_num}")
-                            file_id = existing_cache.audio_file_id
-                        else:
-                            # 정말 저장 실패한 경우
-                            print(f"❌ Failed to save cache for page {page_num}: {save_error}")
-                    
-                    audio_url = f"/cache/gridfs/{file_id}"
+                    audio_url = f"/outputs/cache/{story_id}/{character_id}/{filename}"
             
             generated_pages.append({
                 "page": page_num,
@@ -1187,7 +1142,7 @@ async def story_chat(story_id: str, request: LLMChatRequest):
 @app.post("/stories/{story_id}/pregenerate-audio")
 async def pregenerate_story_pages_audio(story_id: str, character_id: str = Form(...)):
     """
-    동화의 모든 페이지에 대한 오디오를 미리 생성 (GridFS 사용)
+    동화의 모든 페이지에 대한 오디오를 미리 생성 (로컬 파일 저장)
     
     Args:
         story_id: 동화 ID
@@ -1196,92 +1151,52 @@ async def pregenerate_story_pages_audio(story_id: str, character_id: str = Form(
     Returns:
         생성된 페이지별 오디오 정보
     """
-    if not MONGODB_AVAILABLE or audio_cache_repo is None:
+    # 동화 및 캐릭터 확인
+    if MONGODB_AVAILABLE and storybook_repo:
+        story_db = await storybook_repo.get_by_id(story_id)
+        if not story_db:
+            raise HTTPException(status_code=404, detail="Story not found")
+        pages = split_story_into_pages(story_db.content)
+    else:
         raise HTTPException(status_code=503, detail="MongoDB not available")
     
-    # 동화 및 캐릭터 확인
-    story_db = await storybook_repo.get_by_id(story_id)
-    if not story_db:
-        raise HTTPException(status_code=404, detail="Story not found")
     if character_id not in characters_db:
         raise HTTPException(status_code=404, detail="Character not found")
     
     speaker_embedding = load_character_embedding(character_id)
-    pages = split_story_into_pages(story_db.content)
+    
+    # 캐시 디렉토리 생성
+    cache_dir = OUTPUTS_DIR / "cache" / story_id / character_id
+    cache_dir.mkdir(parents=True, exist_ok=True)
     
     generated_pages = []
     print(f"🎤 Pre-generating audio for story '{story_id}' ({len(pages)} pages)...")
     
     for page in pages:
         try:
-            # MongoDB에서 캐시 확인
-            cache = await audio_cache_repo.find_cache_by_page(
-                character_id, 
-                story_id, 
-                page.page
-            )
+            # 로컬 파일로 캐시 확인
+            filename = f"page_{page.page}.wav"
+            file_path = cache_dir / filename
             
-            if cache:
-                print(f"✅ Page {page.page} already cached in GridFS")
-                audio_url = f"/cache/gridfs/{cache.audio_file_id}"
+            if file_path.exists():
+                print(f"✅ Page {page.page} already cached: {file_path}")
+                audio_url = f"/outputs/cache/{story_id}/{character_id}/{filename}"
             else:
                 print(f"🎤 Generating audio for page {page.page}...")
                 
                 # Race condition 방지: 저장 전에 다시 한 번 확인
-                cache_check = await audio_cache_repo.find_cache_by_page(
-                    character_id, 
-                    story_id, 
-                    page.page
-                )
-                if cache_check:
+                if file_path.exists():
                     print(f"✅ Page {page.page} was cached by another request, using existing")
-                    audio_url = f"/cache/gridfs/{cache_check.audio_file_id}"
+                    audio_url = f"/outputs/cache/{story_id}/{character_id}/{filename}"
                 else:
                     wavs = generate_tts_audio(page.text, speaker_embedding, language="ko")
                     sampling_rate = model.autoencoder.sampling_rate
                     
-                    # 오디오를 바이트로 변환
-                    audio_bytes = convert_audio_to_bytes(wavs, sampling_rate)
+                    # 로컬 파일로 저장
+                    save_audio_file(wavs, sampling_rate, file_path)
+                    print(f"✅ Page {page.page} audio saved to: {file_path}")
                     
-                    # GridFS에 저장
-                    filename = f"{character_id}_{story_id}_page_{page.page}.wav"
-                    file_id = await audio_cache_repo.save_audio_to_gridfs(
-                        audio_bytes,
-                        filename,
-                        metadata={
-                            "character_id": character_id,
-                            "story_id": story_id,
-                            "page": page.page
-                        }
-                    )
-                    
-                    # 메타데이터 저장 (중복 방지: 이미 있으면 에러 무시)
-                    try:
-                        cache_doc = AudioCacheDB(
-                            character_id=character_id,
-                            story_id=story_id,
-                            chunk_index=page.page,
-                            audio_file_id=file_id,
-                            generated_at=datetime.now()
-                        )
-                        await audio_cache_repo.save_cache(cache_doc)
-                        print(f"✅ Page {page.page} audio generated and cached in GridFS")
-                    except Exception as save_error:
-                        # 중복 저장 시도 시 (다른 요청이 이미 저장함)
-                        print(f"⚠️ Page {page.page} cache save conflict (likely duplicate), checking existing cache...")
-                        existing_cache = await audio_cache_repo.find_cache_by_page(
-                            character_id, 
-                            story_id, 
-                            page.page
-                        )
-                        if existing_cache:
-                            print(f"✅ Using existing cache for page {page.page}")
-                            file_id = existing_cache.audio_file_id
-                        else:
-                            # 정말 저장 실패한 경우
-                            print(f"❌ Failed to save cache for page {page.page}: {save_error}")
-                    
-                    audio_url = f"/cache/gridfs/{file_id}"
+                    audio_url = f"/outputs/cache/{story_id}/{character_id}/{filename}"
                 
             generated_pages.append({
                 "page": page.page,
@@ -1308,7 +1223,7 @@ async def pregenerate_story_pages_audio(story_id: str, character_id: str = Form(
 @app.get("/stories/{story_id}/check-audio")
 async def check_story_audio_files(story_id: str, character_id: str = Query(...)):
     """
-    동화의 페이지별 오디오 파일이 이미 생성되어 있는지 확인
+    동화의 페이지별 오디오 파일이 이미 생성되어 있는지 확인 (로컬 파일)
     
     Args:
         story_id: 동화 ID
@@ -1317,7 +1232,7 @@ async def check_story_audio_files(story_id: str, character_id: str = Query(...))
     Returns:
         생성된 오디오 파일 목록
     """
-    if not MONGODB_AVAILABLE or audio_cache_repo is None:
+    if not MONGODB_AVAILABLE or storybook_repo is None:
         raise HTTPException(status_code=503, detail="MongoDB not available")
     
     story_db = await storybook_repo.get_by_id(story_id)
@@ -1327,51 +1242,20 @@ async def check_story_audio_files(story_id: str, character_id: str = Query(...))
     pages = split_story_into_pages(story_db.content)
     existing_audio = []
     
+    # 캐시 디렉토리 확인
+    cache_dir = OUTPUTS_DIR / "cache" / story_id / character_id
+    
     for page in pages:
-        # 먼저 audio_cache 컬렉션에서 확인
-        cache = await audio_cache_repo.find_cache_by_page(
-            character_id, 
-            story_id, 
-            page.page
-        )
+        filename = f"page_{page.page}.wav"
+        file_path = cache_dir / filename
         
-        if cache:
-            audio_url = f"/cache/gridfs/{cache.audio_file_id}"
+        if file_path.exists():
+            audio_url = f"/outputs/cache/{story_id}/{character_id}/{filename}"
             existing_audio.append({
                 "page": page.page,
                 "text": page.text,
                 "audio_url": audio_url
             })
-        else:
-            # audio_cache에 없으면 GridFS에서 직접 찾기
-            gridfs_file_id = await audio_cache_repo.find_audio_in_gridfs(
-                character_id,
-                story_id,
-                page.page
-            )
-            
-            if gridfs_file_id:
-                audio_url = f"/cache/gridfs/{gridfs_file_id}"
-                existing_audio.append({
-                    "page": page.page,
-                    "text": page.text,
-                    "audio_url": audio_url
-                })
-                # audio_cache에도 저장 (다음번에는 빠르게 찾을 수 있도록)
-                try:
-                    cache_doc = AudioCacheDB(
-                        character_id=character_id,
-                        story_id=story_id,
-                        chunk_index=page.page,
-                        audio_file_id=gridfs_file_id,
-                        generated_at=datetime.now()
-                    )
-                    await audio_cache_repo.save_cache(cache_doc)
-                    print(f"✅ Page {page.page} metadata synced to audio_cache")
-                except Exception as sync_error:
-                    # 중복 저장 시도 시 무시 (이미 다른 요청이 저장했을 수 있음)
-                    if "E11000" not in str(sync_error) and "duplicate" not in str(sync_error).lower():
-                        print(f"⚠️ Failed to sync page {page.page} to audio_cache: {sync_error}")
     
     return {
         "story_id": story_id,

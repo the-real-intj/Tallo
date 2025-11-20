@@ -53,6 +53,7 @@ export function StoryBookPanel({
   const [isWaitingForAnswer, setIsWaitingForAnswer] = useState(false);
   const [userAnswer, setUserAnswer] = useState('');
   const [isProcessingAnswer, setIsProcessingAnswer] = useState(false);
+  const [conversationCount, setConversationCount] = useState(0); // 대화 횟수 추적 (2마디까지)
   const [closingMessage, setClosingMessage] = useState<string | null>(null);
   const [closingAudioUrl, setClosingAudioUrl] = useState<string | null>(null);
   const questionAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -195,23 +196,29 @@ export function StoryBookPanel({
       try {
         setIsLoadingAudio(true);
 
-        let audioUrl: string;
+        let audioUrl: string | null = null;
 
-        // MongoDB 스토리의 audio_url이 있으면 우선 사용
+        // 1. currentPage.audio_url 우선 확인 (이미 API_BASE_URL이 붙어있을 수 있음)
         if (currentPage.audio_url) {
-          // 상대 경로면 API URL 추가
-          if (currentPage.audio_url.startsWith('/')) {
+          if (currentPage.audio_url.startsWith('http')) {
+            // 이미 절대 URL
+            audioUrl = currentPage.audio_url;
+          } else if (currentPage.audio_url.startsWith('/')) {
+            // 상대 경로면 API URL 추가
             audioUrl = `${API_BASE_URL}${currentPage.audio_url}`;
           } else {
-            audioUrl = currentPage.audio_url;
+            // 경로만 있으면 API URL 추가
+            audioUrl = `${API_BASE_URL}/${currentPage.audio_url}`;
           }
-        } 
-        // 미리 생성된 오디오 맵에서 찾기
-        else if (audioMap[currentPage.page]) {
+        }
+        
+        // 2. audioMap에서 찾기 (이미 API_BASE_URL이 붙어있음)
+        if (!audioUrl && audioMap[currentPage.page]) {
           audioUrl = audioMap[currentPage.page];
-        } 
-        // 둘 다 없으면 대기
-        else {
+        }
+        
+        // 3. 둘 다 없으면 대기
+        if (!audioUrl) {
           console.log(`⏳ 페이지 ${currentPage.page} 오디오 생성 중...`);
           console.log(`🔍 디버깅: currentPage.audio_url =`, currentPage.audio_url);
           console.log(`🔍 디버깅: audioMap[${currentPage.page}] =`, audioMap[currentPage.page]);
@@ -311,6 +318,8 @@ export function StoryBookPanel({
             // 페이지가 2의 배수인 경우 질문 생성
             if (currentPage.page % 2 === 0 && currentPage.text) {
               console.log(`❓ 페이지 ${currentPage.page}는 2의 배수, 질문 생성`);
+              // 대화 카운터 초기화 (새 질문 시작)
+              setConversationCount(0);
               try {
                 const questionResult = await generateQuestion({
                   page_text: currentPage.text,
@@ -516,7 +525,9 @@ export function StoryBookPanel({
           {/* 사용자 답변 입력 */}
           {isWaitingForAnswer && (
             <div className="mb-6 p-4 bg-yellow-50 rounded-lg border-2 border-yellow-200">
-              <p className="text-sm text-yellow-700 font-semibold mb-3">💭 답변을 입력해주세요</p>
+              <p className="text-sm text-yellow-700 font-semibold mb-3">
+                💭 {conversationCount === 0 ? '답변을 입력해주세요' : `${conversationCount + 1}번째 대화 - 자유롭게 이야기해주세요`}
+              </p>
               <textarea
                 value={userAnswer}
                 onChange={(e) => setUserAnswer(e.target.value)}
@@ -530,9 +541,15 @@ export function StoryBookPanel({
                   
                   setIsProcessingAnswer(true);
                   try {
+                    // 대화 횟수에 따라 다른 프롬프트 사용
+                    const isFirstConversation = conversationCount === 0;
+                    const prompt = isFirstConversation
+                      ? `질문: ${questionText}\n사용자 답변: ${userAnswer}\n\n사용자의 답변에 대해 격려하고 아주 간단히 설명해주세요.`
+                      : `이전 대화 맥락: ${questionText}\n사용자가 말한 내용: ${userAnswer}\n\n사용자의 말에 자연스럽게 대답하고, 동화 내용과 관련된 간단한 이야기를 나눠주세요.`;
+                    
                     // LLM이 답변에 대한 응답 생성
                     const response = await chatWithLLMAndTTS({
-                      message: `질문: ${questionText}\n사용자 답변: ${userAnswer}\n\n사용자의 답변에 대해 격려하고 아주 간단히 설명해주세요.`,
+                      message: prompt,
                       character_id: character.voice,
                       character_name: character.name,
                       return_audio: true,
@@ -554,24 +571,50 @@ export function StoryBookPanel({
                       
                       responseAudio.onended = () => {
                         URL.revokeObjectURL(blobUrl);
-                        // 상태 초기화 및 다음 페이지로 이동
+                        
+                        // 2마디 대화 완료 여부 확인
+                        const newCount = conversationCount + 1;
+                        setConversationCount(newCount);
+                        
+                        if (newCount >= 2) {
+                          // 2마디 대화 완료 → 다음 페이지로 이동
+                          console.log(`✅ 2마디 대화 완료, 다음 페이지로 이동`);
+                          setQuestionText(null);
+                          setQuestionAudioUrl(null);
+                          setIsWaitingForAnswer(false);
+                          setUserAnswer('');
+                          setIsProcessingAnswer(false);
+                          setConversationCount(0);
+                          onNext();
+                        } else {
+                          // 아직 대화 더 필요 → 사용자 입력 대기
+                          console.log(`💬 ${newCount}/2 대화 완료, 사용자 입력 대기`);
+                          setUserAnswer(''); // 입력 필드 초기화
+                          setIsProcessingAnswer(false);
+                          setIsWaitingForAnswer(true);
+                        }
+                      };
+                      
+                      await responseAudio.play();
+                    } else {
+                      // 오디오가 없으면 대화 카운터만 증가
+                      const newCount = conversationCount + 1;
+                      setConversationCount(newCount);
+                      
+                      if (newCount >= 2) {
+                        // 2마디 대화 완료
                         setQuestionText(null);
                         setQuestionAudioUrl(null);
                         setIsWaitingForAnswer(false);
                         setUserAnswer('');
                         setIsProcessingAnswer(false);
+                        setConversationCount(0);
                         onNext();
-                      };
-                      
-                      await responseAudio.play();
-                    } else {
-                      // 오디오가 없으면 바로 다음 페이지로
-                      setQuestionText(null);
-                      setQuestionAudioUrl(null);
-                      setIsWaitingForAnswer(false);
-                      setUserAnswer('');
-                      setIsProcessingAnswer(false);
-                      onNext();
+                      } else {
+                        setUserAnswer('');
+                        setIsProcessingAnswer(false);
+                        setIsWaitingForAnswer(true);
+                      }
                     }
                   } catch (error) {
                     console.error('❌ 답변 처리 실패:', error);
