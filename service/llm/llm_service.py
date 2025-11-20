@@ -81,7 +81,7 @@ class LLMService:
                         {"role": "user", "content": message}
                     ],
                     temperature=0.7,
-                    max_tokens=500
+                    max_tokens=150  # 1-2문장 제한을 위해 토큰 수 감소
                 )
                 llm_text = response.choices[0].message.content
             except (ImportError, AttributeError):
@@ -93,7 +93,7 @@ class LLMService:
                         {"role": "user", "content": message}
                     ],
                     temperature=0.7,
-                    max_tokens=500
+                    max_tokens=150  # 1-2문장 제한을 위해 토큰 수 감소
                 )
                 llm_text = response.choices[0].message.content
         except Exception as e:
@@ -138,7 +138,7 @@ class LLMService:
 - 아이가 이해하기 쉽고 간단해야 합니다
 - 동화의 흐름을 이해하는데 도움이 되어야 합니다
 - 질문만 답변해주세요. 다른 설명은 필요 없습니다.
-- 질문은 아주 간단히 1-2문장으로 만들어주세요.
+- 질문은 반드시 1문장으로만 만들어주세요.
 
 페이지 내용:
 "{page_text}"
@@ -179,7 +179,7 @@ class LLMService:
             {"text": str, "audio_url": Optional[str]}
         """
         closing_prompt = f"""다음 동화를 읽고, 아이에게 동화를 마무리하는 따뜻한 멘트를 해주세요.
-멘트는 2-3문장 정도로 간단하고 따뜻해야 합니다.
+멘트는 1-2문장으로 간단하고 따뜻해야 합니다.
 멘트만 답변해주세요. 다른 설명은 필요 없습니다.
 
 동화 제목: {story_title}

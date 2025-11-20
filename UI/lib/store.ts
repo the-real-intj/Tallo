@@ -14,7 +14,7 @@ export const useAppStore = create<AppState>((set) => ({
   messages: [],
   isPlaying: false,
   currentEmotion: 'neutral',
-  isVoiceEnabled: false,
+  isVoiceEnabled: true,  // 기본값을 true로 변경 (동화 시작 시 음성 자동 활성화)
 
   setSelectedCharacter: (character) =>
     set({ selectedCharacter: character }),
@@ -25,18 +25,29 @@ export const useAppStore = create<AppState>((set) => ({
   setCurrentPage: (page) =>
     set({ currentPage: page }),
 
-  addMessage: (type, text) =>
-    set((state) => ({
-      messages: [
-        ...state.messages,
-        {
-          id: Date.now(),
-          type,
-          text,
-          timestamp: Date.now(),
-        },
-      ],
-    })),
+  addMessage: (type, text) => {
+    let newId = 0;
+    set((state) => {
+      // 고유한 ID 생성: 마지막 메시지 ID + 1 또는 타임스탬프 + 랜덤
+      const lastId = state.messages.length > 0 
+        ? Math.max(...state.messages.map(m => m.id))
+        : 0;
+      newId = lastId + 1;
+      
+      return {
+        messages: [
+          ...state.messages,
+          {
+            id: newId,
+            type,
+            text,
+            timestamp: Date.now(),
+          },
+        ],
+      };
+    });
+    return newId;
+  },
 
   clearMessages: () =>
     set({ messages: [] }),

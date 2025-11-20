@@ -69,6 +69,13 @@
   }
 }
 
+/* 투명 PNG 배경 처리 */
+@layer base {
+  img {
+    background-color: transparent;
+  }
+}
+
 /* 스크롤바 스타일링 */
 @layer base {
   *::-webkit-scrollbar {
