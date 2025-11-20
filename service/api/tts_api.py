@@ -723,7 +723,8 @@ async def health_check():
 @app.post("/stories/pregenerate")
 async def pregenerate_story_audio(request: PreGenerateStoryRequest):
     """
-    동화책 전체 페이지의 TTS를 미리 생성하여 캐싱
+    동화책 전체 페이지의 TTS를 미리 생성하여 로컬 폴더에 저장
+    (동화책별 폴더에 저장: outputs/stories/{story_title}/)
     
     Args:
         request: character_id와 pages 리스트
@@ -733,103 +734,126 @@ async def pregenerate_story_audio(request: PreGenerateStoryRequest):
     """
     character_id = request.character_id
     
-    # 캐릭터 확인
-    if character_id not in characters_db:
-        raise HTTPException(status_code=404, detail="Character not found")
-    
-    # Speaker Embedding 로드
-    speaker_embedding = load_character_embedding(character_id)
-    
-    # 캐릭터별 캐시 디렉토리 생성
-    cache_dir = CACHE_DIR / character_id
-    cache_dir.mkdir(exist_ok=True)
-    
-    generated_pages = []
-    
-    print(f"📚 Pre-generating story audio for character '{character_id}'...")
-    
-    for page_data in request.pages:
-        page_num = page_data["page"]
-        text = page_data["text"]
+    try:
+        # 캐릭터 확인
+        if character_id not in characters_db:
+            # characters_db 로드 재시도
+            load_characters_db()
+            if character_id not in characters_db:
+                print(f"⚠️ Character '{character_id}' not found in local DB")
+                print(f"📊 Available characters: {list(characters_db.keys())}")
+                raise HTTPException(status_code=404, detail=f"Character '{character_id}' not found")
         
-        try:
-            # 이미 캐시된 파일이 있는지 확인
-            cached_file = cache_dir / f"page_{page_num}.wav"
+        # Speaker Embedding 로드
+        speaker_embedding = load_character_embedding(character_id)
+        
+        # 동화책 제목 생성 (페이지 텍스트 첫 부분에서 추출 또는 기본값)
+        # 첨번째 페이지의 첫 20글자를 제목으로 사용
+        story_title = "story"
+        if request.pages and len(request.pages) > 0:
+            first_text = request.pages[0].get("text", "")
+            # 첫 20글자 또는 첫 문장
+            story_title = first_text[:20].strip() if first_text else "story"
+        
+        # 파일 시스템에서 안전한 제목으로 변환 (특수문자 제거)
+        import re
+        safe_title = re.sub(r'[^\w\s-]', '', story_title).strip().replace(' ', '_')
+        if not safe_title:
+            safe_title = "story"
+        
+        # 동화책별 오디오 디렉토리 생성
+        story_audio_dir = OUTPUTS_DIR / "stories" / safe_title
+        story_audio_dir.mkdir(parents=True, exist_ok=True)
+        
+        generated_pages = []
+        
+        print(f"📚 Pre-generating story audio for '{safe_title}' ({len(request.pages)} pages)...")
+        print(f"📁 Output directory: {story_audio_dir}")
+        
+        for page_data in request.pages:
+            page_num = page_data["page"]
+            text = page_data["text"]
             
-            if cached_file.exists():
-                print(f"✅ Page {page_num} already cached")
-                audio_url = f"/cache/{character_id}/page_{page_num}.wav"
-            else:
-                # TTS 생성
-                print(f"🎤 Generating page {page_num}...")
-                cond_dict = make_cond_dict(
-                    text=text,
-                    speaker=speaker_embedding,
-                    language="ko"
-                )
-                conditioning = model.prepare_conditioning(cond_dict)
+            try:
+                # 파일명: {story_title}_page{N}.wav
+                audio_filename = f"{safe_title}_page{page_num}.wav"
+                audio_path = story_audio_dir / audio_filename
                 
-                with torch.no_grad():
-                    codes = model.generate(conditioning)
-                    wavs = model.autoencoder.decode(codes).cpu()
+                # 이미 생성된 파일이 있으면 스킵
+                if audio_path.exists():
+                    print(f"✅ Page {page_num} already exists: {audio_filename}")
+                    audio_url = f"/outputs/stories/{safe_title}/{audio_filename}"
+                else:
+                    # TTS 생성
+                    print(f"🎤 Generating page {page_num}...")
+                    cond_dict = make_cond_dict(
+                        text=text,
+                        speaker=speaker_embedding,
+                        language="ko",
+                        speaking_rate=18.0,
+                        pitch_std=30.0
+                    )
+                    conditioning = model.prepare_conditioning(cond_dict)
+                    
+                    with torch.no_grad():
+                        # 최적화된 토큰 계산
+                        text_length = len(text)
+                        max_tokens = min(text_length * 13 + 100, 800)
+                        print(f"📝 Page {page_num}: {text_length} chars → {max_tokens} tokens")
+                        
+                        codes = model.generate(
+                            conditioning,
+                            max_new_tokens=max_tokens,
+                            sampling_params={"min_p": 0.15, "temperature": 0.9}
+                        )
+                        wavs = model.autoencoder.decode(codes).cpu()
+                    
+                    # 파일 저장
+                    torchaudio.save(
+                        str(audio_path),
+                        wavs[0],
+                        model.autoencoder.sampling_rate,
+                        backend="soundfile"
+                    )
+                    
+                    audio_url = f"/outputs/stories/{safe_title}/{audio_filename}"
+                    print(f"✅ Page {page_num} generated: {audio_filename}")
                 
-                # 파일 저장
-                torchaudio.save(
-                    str(cached_file),
-                    wavs[0],
-                    model.autoencoder.sampling_rate,
-                    backend="soundfile"
-                )
+                generated_pages.append({
+                    "page": page_num,
+                    "text": text,
+                    "audio_url": audio_url
+                })
                 
-                audio_url = f"/cache/{character_id}/page_{page_num}.wav"
-                print(f"✅ Page {page_num} generated and cached")
-            
-            generated_pages.append({
-                "page": page_num,
-                "text": text,
-                "audio_url": audio_url
-            })
-            
-        except Exception as e:
-            print(f"❌ Error generating page {page_num}: {e}")
-            generated_pages.append({
-                "page": page_num,
-                "text": text,
-                "error": str(e)
-            })
-    
-    # 캐시 정보 저장
-    if character_id not in story_audio_cache:
-        story_audio_cache[character_id] = {}
-    
-    for page_data in generated_pages:
-        if "audio_url" in page_data:
-            story_audio_cache[character_id][page_data["page"]] = page_data["audio_url"]
-    
-    return {
-        "character_id": character_id,
-        "total_pages": len(generated_pages),
-        "pages": generated_pages
-    }
+            except Exception as e:
+                print(f"❌ Error generating page {page_num}: {e}")
+                import traceback
+                traceback.print_exc()
+                generated_pages.append({
+                    "page": page_num,
+                    "text": text,
+                    "error": str(e)
+                })
+        
+        return {
+            "character_id": character_id,
+            "story_title": safe_title,
+            "total_pages": len(generated_pages),
+            "pages": generated_pages
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Error in pregenerate_story_audio: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"오디오 생성 중 오류: {str(e)}")
 
 @app.get("/cache/{character_id}/{filename}")
 async def get_cached_audio(character_id: str, filename: str):
     """
     캐시된 오디오 파일 제공
-    
-    Args:
-        character_id: 캐릭터 ID
-        filename: 파일명
-    """
-    file_path = CACHE_DIR / character_id / filename
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Cached audio not found")
-    return FileResponse(file_path, media_type="audio/wav")
-
-@app.get("/stories/audio/{character_id}")
-async def get_story_audio_map(character_id: str):
-    """
-    특정 캐릭터의 동화책 오디오 맵핑 조회
     
     Returns:
         {page_num: audio_url} 딕셔너리
@@ -1233,18 +1257,25 @@ async def pregenerate_story_pages_audio(story_id: str, character_id: str = Form(
         content = story_doc.get("content", "")
         pages = split_story_into_pages(content)
         
+        # 동화 제목 가져오기 (파일명에서 추출)
+        filename = story_doc.get("filename", "")
+        story_title = filename.replace(".txt", "") if filename else "story"
+        # 파일 시스템에서 안전한 제목으로 변환 (특수문자 제거)
+        import re
+        safe_title = re.sub(r'[^\w\s-]', '', story_title).strip().replace(' ', '_')
+        
         # 스토리별 오디오 디렉토리 생성
         story_audio_dir = OUTPUTS_DIR / "stories" / story_id
         story_audio_dir.mkdir(parents=True, exist_ok=True)
         
         generated_pages = []
         
-        print(f"🎤 Pre-generating audio for story '{story_id}' ({len(pages)} pages)...")
+        print(f"🎤 Pre-generating audio for story '{safe_title}' ({len(pages)} pages)...")
         
         for page in pages:
             try:
-                # 페이지별 오디오 파일 경로
-                audio_filename = f"page_{page.page}.wav"
+                # 페이지별 오디오 파일 경로 (동화 제목 + 페이지 번호)
+                audio_filename = f"{safe_title}_page{page.page}.wav"
                 audio_path = story_audio_dir / audio_filename
                 
                 # 이미 생성된 파일이 있으면 스킵

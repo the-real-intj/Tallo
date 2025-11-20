@@ -108,7 +108,7 @@ if __name__ == "__main__":
     success1 = test_list_characters()
 
     # 2. 각 캐릭터의 임베딩 로드 테스트
-    character_ids = ["5fbdc9b344b2", "4c84ef36f400", "6a3fb5695d7c"]
+    character_ids = ["5fbdc9b344b2", "4c84ef36f400", "3bdddc4091e2"]
     character_names = ["아나", "하츄핑", "바레사"]
 
     success2 = True
