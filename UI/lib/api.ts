@@ -133,7 +133,64 @@ export async function getStoryById(storyId: string): Promise<StoryInfo> {
 }
 
 /**
- * 동화 오디오 파일 확인
+ * 로컬 파일 존재 여부 확인 (HEAD 요청)
+ */
+async function checkLocalFileExists(url: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, {
+      method: 'HEAD',
+      headers: {
+        'ngrok-skip-browser-warning': 'true',
+      },
+    });
+    return response.ok;
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
+ * 로컬 오디오 파일 확인 (Next.js 정적 파일 경로)
+ */
+export async function checkLocalAudioFiles(
+  storyId: string,
+  characterId: string,
+  totalPages: number
+): Promise<{
+  existing_audio: Array<{ page: number; audio_url: string }>;
+  missing_pages: number[];
+}> {
+  const existing_audio: Array<{ page: number; audio_url: string }> = [];
+  const missing_pages: number[] = [];
+
+  // 로컬 파일 경로 (Next.js 정적 파일)
+  const localBaseUrl = '/outputs/cache';
+
+  // 각 페이지 확인
+  for (let page = 1; page <= totalPages; page++) {
+    const localUrl = `${localBaseUrl}/${storyId}/${characterId}/page_${page}.wav`;
+    
+    // 로컬 파일 존재 여부 확인
+    const exists = await checkLocalFileExists(localUrl);
+    
+    if (exists) {
+      existing_audio.push({
+        page,
+        audio_url: localUrl, // 로컬 경로 (상대 경로)
+      });
+    } else {
+      missing_pages.push(page);
+    }
+  }
+
+  return {
+    existing_audio,
+    missing_pages,
+  };
+}
+
+/**
+ * 동화 오디오 파일 확인 (Colab 서버)
  * GET /stories/{story_id}/check-audio
  */
 export async function checkStoryAudioFiles(

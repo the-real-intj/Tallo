@@ -10,7 +10,7 @@ import { StoryBookPanel } from '@/components/StoryBookPanel';
 import { ChoiceButtons } from '@/components/ChoiceButtons';
 import { delay } from '@/lib/utils';
 import type { Choice, Story } from '@/types';
-import { chatWithLLMAndTTS, pregenerateStoryPagesAudio, checkStoryAudioFiles, API_BASE_URL, generateQuestion, generateClosingMessage } from '@/lib/api';
+import { chatWithLLMAndTTS, pregenerateStoryPagesAudio, checkStoryAudioFiles, checkLocalAudioFiles, API_BASE_URL, generateQuestion, generateClosingMessage } from '@/lib/api';
 
 /**
  * 메인 페이지
