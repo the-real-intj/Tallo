@@ -40,6 +40,10 @@ export default function HomePage() {
   const currentQuestionRef = useRef<Record<number, string>>({});
   const startMessageIdRef = useRef<number | null>(null); // 시작 메시지 ID 추적
   const closingMessageIdRef = useRef<number | null>(null); // 마무리 메시지 ID 추적 (2번째 대화 완료 후)
+  
+  // 중앙 오디오 재생 제어
+  const isPlayingAudioRef = useRef<boolean>(false); // 현재 오디오 재생 중인지
+  const pendingPageAudioRef = useRef<number | null>(null); // 대기 중인 페이지 번호
 
   // 캐릭터 선택 시 인사 메시지
   useEffect(() => {
@@ -298,8 +302,17 @@ export default function HomePage() {
                 if (completedMessage && completedMessage.text.includes('이야기를 시작할게') && !isPlaying) {
                   console.log('✅ 시작 메시지 TTS 완료, 동화 재생 시작');
                   startMessageIdRef.current = null; // 초기화
+                  isPlayingAudioRef.current = false; // TTS 완료, 페이지 오디오 재생 가능
                   setTimeout(() => {
                     setIsPlaying(true);
+                    // 첫 번째 페이지 오디오 재생 시작
+                    if (selectedStory?.pages && selectedStory.pages.length > 0) {
+                      pendingPageAudioRef.current = 1;
+                      // StoryBookPanel에 재생 신호 전달
+                      if ((window as any).playPageAudio) {
+                        (window as any).playPageAudio(1);
+                      }
+                    }
                   }, 300);
                 }
                 
@@ -307,9 +320,19 @@ export default function HomePage() {
                 if (closingMessageIdRef.current === messageId) {
                   console.log('✅ 마무리 메시지 TTS 완료, 다음 페이지로 이동');
                   closingMessageIdRef.current = null; // 초기화
+                  isPlayingAudioRef.current = false; // TTS 완료, 페이지 오디오 재생 가능
                   setTimeout(() => {
                     handleNextPage();
                   }, 300);
+                }
+                
+                // 일반 TTS 완료 후 대기 중인 페이지 오디오 재생
+                if (isPlayingAudioRef.current === false && pendingPageAudioRef.current !== null) {
+                  const pageToPlay = pendingPageAudioRef.current;
+                  pendingPageAudioRef.current = null;
+                  if ((window as any).playPageAudio) {
+                    (window as any).playPageAudio(pageToPlay);
+                  }
                 }
               }}
               onSendMessage={async (text) => {
@@ -473,8 +496,14 @@ export default function HomePage() {
           storyTitle={selectedStory?.title}  // 동화 제목 전달
           onNext={handleNextPage}
           onPrevious={handlePreviousPage}
+          onPageAudioStart={(page: number) => {
+            // 페이지 오디오 재생 시작
+            isPlayingAudioRef.current = true;
+          }}
           onPageAudioEnded={async (page: number) => {
-            // 페이지 오디오 재생 완료 시 처리
+            // 페이지 오디오 재생 완료
+            isPlayingAudioRef.current = false;
+            
             if (!selectedStory || !selectedCharacter) return;
             
             // 마지막 페이지인 경우 마무리 멘트 생성
@@ -489,10 +518,8 @@ export default function HomePage() {
                   character_name: selectedCharacter.name,
                 });
                 
-                // 마무리 멘트를 채팅창에 메시지로 추가
+                // 마무리 멘트를 채팅창에 메시지로 추가 (TTS 자동 재생)
                 addMessage('character', closingResult.text);
-                
-                // 마무리 멘트 오디오 재생 (TTS는 ChatPanel에서 자동 처리)
               } catch (error) {
                 console.error('❌ 마무리 멘트 생성 실패:', error);
               }
@@ -515,11 +542,12 @@ export default function HomePage() {
                     story_title: selectedStory.title,
                   });
                   
-                  // 질문을 채팅창에 메시지로 추가
+                  // 질문을 채팅창에 메시지로 추가 (TTS 자동 재생)
                   addMessage('character', questionResult.text);
                   currentQuestionRef.current[page] = questionResult.text;
                   
-                  // 질문 오디오 재생 (TTS는 ChatPanel에서 자동 처리)
+                  // TTS 재생 중이므로 페이지 오디오는 대기 (TTS 완료 후 자동으로 다음 페이지 재생)
+                  isPlayingAudioRef.current = true;
                 } catch (error) {
                   console.error('❌ 질문 생성 실패:', error);
                   // 질문 생성 실패 시 다음 페이지로 이동
@@ -529,7 +557,15 @@ export default function HomePage() {
             } else {
               // 2의 배수가 아니면 바로 다음 페이지로 이동
               console.log(`⏭️ 페이지 ${page} 재생 완료, 다음 페이지로 이동`);
-              handleNextPage();
+              const nextPage = page + 1;
+              if (nextPage <= (selectedStory.pages?.length || 1)) {
+                // 다음 페이지 오디오 재생
+                if ((window as any).playPageAudio) {
+                  (window as any).playPageAudio(nextPage);
+                } else {
+                  handleNextPage();
+                }
+              }
             }
           }}
         />

@@ -19,6 +19,7 @@ interface StoryBookPanelProps {
   onPrevious: () => void;
   onAudioPregenerated?: (audioMap: Record<number, string>) => void;  // 미리 생성 완료 콜백
   onPageAudioEnded?: (page: number) => void;  // 페이지 오디오 재생 완료 콜백
+  onPageAudioStart?: (page: number) => void;  // 페이지 오디오 재생 시작 콜백
 }
 
 /**
@@ -40,6 +41,7 @@ export function StoryBookPanel({
   onPrevious,
   onAudioPregenerated,
   onPageAudioEnded,
+  onPageAudioStart,
 }: StoryBookPanelProps) {
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [isPregenerating, setIsPregenerating] = useState(false);
@@ -157,22 +159,36 @@ export function StoryBookPanel({
     }
   }, [selectedStoryPages, storyPages, currentPage, API_BASE_URL]);
 
-  // 페이지가 바뀔 때마다 미리 생성된 오디오 재생
-  useEffect(() => {
-    const playPageAudio = async () => {
-      // 음성이 꺼져있거나, 재생 중이 아니거나, 현재 페이지가 없으면 재생 안 함
-      if (!isVoiceEnabled || !isPlaying || !currentPage) return;
+  // 페이지 오디오 재생 함수 (외부에서 호출 가능)
+  const playPageAudio = async (pageNum?: number) => {
+    const targetPage = pageNum || currentPage?.page;
+    if (!targetPage) return;
+    
+    // 해당 페이지 정보 찾기
+    const targetPageData = selectedStoryPages?.find(p => p.page === targetPage) || 
+                          storyPages.find(p => p.page === targetPage);
+    
+    if (!targetPageData) {
+      console.warn(`⚠️ 페이지 ${targetPage} 정보를 찾을 수 없음`);
+      return;
+    }
 
-      // 이미 읽은 페이지면 무시 (단, audio_url이 새로 생겼으면 재실행)
-      const hasAudio = currentPage.audio_url || audioMap[currentPage.page];
-      if (currentPage.page === lastReadPageRef.current) {
-        // 오디오가 새로 생겼으면 재실행
-        if (hasAudio) {
-          lastReadPageRef.current = -1;
-        } else {
-          return;
-        }
+    // 음성이 꺼져있거나, 재생 중이 아니면 재생 안 함
+    if (!isVoiceEnabled || !isPlaying) {
+      console.log(`⏸️ 재생 조건 불만족: isVoiceEnabled=${isVoiceEnabled}, isPlaying=${isPlaying}`);
+      return;
+    }
+
+    // 이미 읽은 페이지면 무시 (단, audio_url이 새로 생겼으면 재실행)
+    const hasAudio = targetPageData.audio_url || audioMap[targetPage];
+    if (targetPage === lastReadPageRef.current) {
+      // 오디오가 새로 생겼으면 재실행
+      if (hasAudio) {
+        lastReadPageRef.current = -1;
+      } else {
+        return;
       }
+    }
 
       // 이전 오디오 정리
       if (audioRef.current) {
@@ -190,39 +206,38 @@ export function StoryBookPanel({
 
         let audioUrl: string | null = null;
 
-        // 1. currentPage.audio_url 우선 확인 (이미 API_BASE_URL이 붙어있을 수 있음)
-        if (currentPage.audio_url) {
-          if (currentPage.audio_url.startsWith('http')) {
+        // 1. targetPageData.audio_url 우선 확인
+        if (targetPageData.audio_url) {
+          if (targetPageData.audio_url.startsWith('http')) {
             // 이미 절대 URL
-            audioUrl = currentPage.audio_url;
-          } else if (currentPage.audio_url.startsWith('/')) {
+            audioUrl = targetPageData.audio_url;
+          } else if (targetPageData.audio_url.startsWith('/')) {
             // 상대 경로면 API URL 추가
-            audioUrl = `${API_BASE_URL}${currentPage.audio_url}`;
+            audioUrl = `${API_BASE_URL}${targetPageData.audio_url}`;
           } else {
             // 경로만 있으면 API URL 추가
-            audioUrl = `${API_BASE_URL}/${currentPage.audio_url}`;
+            audioUrl = `${API_BASE_URL}/${targetPageData.audio_url}`;
           }
         }
         
         // 2. audioMap에서 찾기 (이미 API_BASE_URL이 붙어있음)
-        if (!audioUrl && audioMap[currentPage.page]) {
-          audioUrl = audioMap[currentPage.page];
+        if (!audioUrl && audioMap[targetPage]) {
+          audioUrl = audioMap[targetPage];
         }
         
         // 3. 둘 다 없으면 대기
         if (!audioUrl) {
-          console.log(`⏳ 페이지 ${currentPage.page} 오디오 생성 중...`);
-          console.log(`🔍 디버깅: currentPage.audio_url =`, currentPage.audio_url);
-          console.log(`🔍 디버깅: audioMap[${currentPage.page}] =`, audioMap[currentPage.page]);
-          console.log(`🔍 디버깅: audioMap 전체 =`, audioMap);
-          console.log(`🔍 디버깅: storyPages =`, storyPages);
+          console.log(`⏳ 페이지 ${targetPage} 오디오 생성 중...`);
           setIsLoadingAudio(false);
           return;
         }
 
-        console.log(`🎵 오디오 URL: ${audioUrl}`);
-        console.log(`📄 currentPage:`, currentPage);
-        console.log(`🗺️ audioMap:`, audioMap);
+        console.log(`🎵 페이지 ${targetPage} 오디오 URL: ${audioUrl}`);
+        
+        // 재생 시작 콜백
+        if (onPageAudioStart) {
+          onPageAudioStart(targetPage);
+        }
         
         // fetch로 오디오를 blob으로 가져온 후 Object URL 생성 (CORS/형식 문제 해결)
         try {
@@ -249,7 +264,7 @@ export function StoryBookPanel({
           audioRef.current = audio;
           
           // 오디오 재생 시작 시 lastReadPageRef 설정
-          lastReadPageRef.current = currentPage.page;
+          lastReadPageRef.current = targetPage;
 
           audio.onended = async () => {
             setIsLoadingAudio(false);
@@ -259,14 +274,12 @@ export function StoryBookPanel({
               blobUrlRef.current = null;
             }
             
-            if (!currentPage) return;
-            
-            // 페이지 오디오 재생 완료 콜백 호출 (질문 생성은 page.tsx에서 처리)
+            // 페이지 오디오 재생 완료 콜백 호출
             if (onPageAudioEnded) {
-              onPageAudioEnded(currentPage.page);
+              onPageAudioEnded(targetPage);
             } else {
               // 콜백이 없으면 기본 동작: 다음 페이지로 이동
-              if (currentPage.page < totalPages) {
+              if (targetPage < totalPages) {
                 onNext();
               }
             }
@@ -287,7 +300,7 @@ export function StoryBookPanel({
           };
 
           await audio.play();
-          console.log(`🔊 페이지 ${currentPage.page} 재생 중`);
+          console.log(`🔊 페이지 ${targetPage} 재생 중`);
         } catch (fetchError) {
           console.error('❌ 오디오 fetch 실패:', fetchError);
           setIsLoadingAudio(false);
@@ -297,21 +310,6 @@ export function StoryBookPanel({
         setIsLoadingAudio(false);
       }
     };
-
-    playPageAudio();
-
-    // 컴포넌트 언마운트 시 오디오 정리
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-      }
-    };
-  }, [currentPage, isVoiceEnabled, isPlaying, audioMap, storyPages, character, storyTitle, currentPage?.audio_url]);
 
   // 오디오 정지 함수 (외부에서 호출 가능하도록)
   const stopAudio = () => {
@@ -327,13 +325,16 @@ export function StoryBookPanel({
     }
   };
 
-  // 전역으로 오디오 정지 함수 노출 (ChatPanel에서 사용)
+  // 전역 함수로 등록 (page.tsx에서 호출 가능하도록)
   useEffect(() => {
+    (window as any).playPageAudio = playPageAudio;
     (window as any).stopStoryAudio = stopAudio;
+    
     return () => {
+      delete (window as any).playPageAudio;
       delete (window as any).stopStoryAudio;
     };
-  }, []);
+  }, [isVoiceEnabled, isPlaying, selectedStoryPages, storyPages, audioMap, totalPages, onNext, onPageAudioEnded, onPageAudioStart]);
 
   if (!currentPage) {
     return (
