@@ -7,9 +7,8 @@ import { StorySelector } from '@/components/StorySelector';
 import { ChatPanel } from '@/components/ChatPanel';
 import { CharacterViewer } from '@/components/CharacterViewer';
 import { StoryBookPanel } from '@/components/StoryBookPanel';
-import { ChoiceButtons } from '@/components/ChoiceButtons';
 import { delay } from '@/lib/utils';
-import type { Choice, Story } from '@/types';
+import type { Story } from '@/types';
 import { chatWithLLMAndTTS, pregenerateStoryPagesAudio, checkStoryAudioFiles, checkLocalAudioFiles, API_BASE_URL, generateQuestion, generateClosingMessage } from '@/lib/api';
 
 /**
@@ -70,14 +69,6 @@ export default function HomePage() {
     setSelectedStory(story);
     setCurrentPage(1);
     setIsPlaying(false);
-    
-  //   // 스토리 선택 시 인사 메시지
-  //   if (selectedCharacter) {
-  //     addMessage(
-  //       'character',
-  //       `${story.title} 이야기를 시작할까?`
-  //     );
-  //   }
   };
 
   // 이야기 시작
@@ -100,45 +91,70 @@ export default function HomePage() {
     let updatedStoryPages = selectedStory.pages;
     if (selectedStory.pages && selectedStory.pages.length > 0 && isVoiceEnabled) {
       try {
-        // 먼저 이미 생성된 오디오 파일이 있는지 확인
-        console.log('🔍 오디오 파일 확인 시작:', selectedStory.id, selectedCharacter.voice);
-        const audioCheck = await checkStoryAudioFiles(selectedStory.id, selectedCharacter.voice);
-        console.log('📊 오디오 확인 결과:', {
+        // 1단계: 로컬 파일 먼저 확인
+        console.log('🔍 로컬 오디오 파일 확인 시작:', selectedStory.id, selectedCharacter.voice);
+        const localCheck = await checkLocalAudioFiles(
+          selectedStory.id,
+          selectedCharacter.voice,
+          selectedStory.pages.length
+        );
+        console.log('📊 로컬 오디오 확인 결과:', {
+          existing: localCheck.existing_audio.length,
+          missing: localCheck.missing_pages.length
+        });
+
+        // 로컬 파일이 있으면 먼저 매핑
+        if (localCheck.existing_audio.length > 0) {
+          console.log('✅ 로컬 오디오 파일 매핑:', localCheck.existing_audio.length);
+          updatedStoryPages = selectedStory.pages.map(page => {
+            const existing = localCheck.existing_audio.find(ea => ea.page === page.page);
+            if (existing?.audio_url) {
+              console.log(`✅ 로컬 페이지 ${page.page} 오디오 URL:`, existing.audio_url);
+              return { ...page, audio_url: existing.audio_url };
+            }
+            return page;
+          });
+        }
+
+        // 2단계: 로컬에 없는 파일만 Colab 서버에서 확인
+        const missingPages = localCheck.missing_pages;
+        if (missingPages.length > 0) {
+          console.log(`⚠️ ${missingPages.length}개 페이지 로컬에 없음, Colab 서버 확인...`);
+          const audioCheck = await checkStoryAudioFiles(selectedStory.id, selectedCharacter.voice);
+          console.log('📊 Colab 서버 확인 결과:', {
           total: audioCheck.total_pages,
           existing: audioCheck.existing_audio_count,
           all_exists: audioCheck.all_audio_exists,
           existing_audio: audioCheck.existing_audio
         });
         
-        // 기존 오디오가 있으면 먼저 매핑
-        if (audioCheck.existing_audio.length > 0) {
-          console.log('✅ 기존 오디오 파일 매핑:', audioCheck.existing_audio_count);
-          updatedStoryPages = selectedStory.pages.map(page => {
-            const existing = audioCheck.existing_audio.find(ea => ea.page === page.page);
-            if (existing?.audio_url) {
-              // audio_url이 상대 경로면 API_BASE_URL 추가
-              let audioUrl = existing.audio_url;
-              if (audioUrl.startsWith('/')) {
-                audioUrl = `${API_BASE_URL}${audioUrl}`;
-              } else if (!audioUrl.startsWith('http')) {
-                audioUrl = `${API_BASE_URL}/${audioUrl}`;
+          // 서버에 있는 오디오 매핑 (로컬에 없는 것만)
+          if (audioCheck.existing_audio.length > 0 && updatedStoryPages) {
+            updatedStoryPages = updatedStoryPages.map(page => {
+              // 이미 로컬 오디오가 있으면 유지
+              if (page.audio_url) {
+                return page;
               }
-              console.log(`✅ 페이지 ${page.page} 오디오 URL:`, audioUrl);
-              return { ...page, audio_url: audioUrl };
-            }
-            return page;
-          });
-        }
-        
-        // 모든 오디오가 없으면 생성
-        if (!audioCheck.all_audio_exists) {
-          const missingPages = selectedStory.pages.filter(page => {
-            const hasAudio = audioCheck.existing_audio.some(ea => ea.page === page.page);
-            return !hasAudio;
-          });
-          
-          if (missingPages.length > 0) {
-            console.log(`⚠️ ${missingPages.length}개 페이지 오디오 없음, 생성 시작...`);
+              // 서버 오디오 찾기
+              const serverAudio = audioCheck.existing_audio.find(ea => ea.page === page.page);
+              if (serverAudio?.audio_url) {
+                let audioUrl = serverAudio.audio_url;
+                if (audioUrl.startsWith('/')) {
+                  audioUrl = `${API_BASE_URL}${audioUrl}`;
+                } else if (!audioUrl.startsWith('http')) {
+                  audioUrl = `${API_BASE_URL}/${audioUrl}`;
+                }
+                console.log(`✅ 서버 페이지 ${page.page} 오디오 URL:`, audioUrl);
+                return { ...page, audio_url: audioUrl };
+              }
+              return page;
+            });
+          }
+
+          // 3단계: 서버에도 없으면 생성 요청
+          const stillMissing = updatedStoryPages?.filter(page => !page.audio_url) || [];
+          if (stillMissing.length > 0) {
+            console.log(`⚠️ ${stillMissing.length}개 페이지 오디오 없음, 생성 시작...`);
             addMessage('character', '오디오를 준비하고 있어요...');
             const result = await pregenerateStoryPagesAudio(selectedStory.id, selectedCharacter.voice);
             console.log('🎵 pregenerateStoryPagesAudio 결과:', result);
@@ -218,15 +234,6 @@ export default function HomePage() {
     // setIsPlaying(true)는 onTTSComplete에서 호출됨
   };
 
-  // 선택지 선택 (MongoDB 스토리는 단일 페이지이므로 사용 안 함)
-  const handleChoice = async (choice: Choice) => {
-    addMessage('user', choice.text);
-    
-    await delay(800);
-    // MongoDB 스토리는 선택지가 없으므로 처리하지 않음
-    addMessage('character', '좋은 선택이에요!');
-    setCurrentEmotion('excited');
-  };
 
   // 다음 페이지
   const handleNextPage = async () => {
@@ -419,15 +426,6 @@ export default function HomePage() {
               }}
             />
 
-            {/* 선택지 버튼 (채팅 영역 바로 아래) */}
-            {currentStoryPage?.choices && (
-              <div className="px-4">
-                <ChoiceButtons
-                  choices={currentStoryPage.choices}
-                  onChoice={handleChoice}
-                />
-              </div>
-            )}
           </>
         )}
 
