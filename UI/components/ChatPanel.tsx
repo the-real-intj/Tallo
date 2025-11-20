@@ -11,13 +11,14 @@ interface ChatPanelProps {
   isVoiceEnabled: boolean;
   onClose: () => void;
   onSendMessage?: (text: string) => void; // 메시지 전송 핸들러
+  onTTSComplete?: (messageId: number) => void; // 특정 메시지의 TTS 재생 완료 콜백
 }
 
 /**
  * 채팅 패널 컴포넌트
  * 캐릭터와의 대화를 표시
  */
-export function ChatPanel({ character, messages, isVoiceEnabled, onClose, onSendMessage }: ChatPanelProps) {
+export function ChatPanel({ character, messages, isVoiceEnabled, onClose, onSendMessage, onTTSComplete }: ChatPanelProps) {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
@@ -74,8 +75,15 @@ export function ChatPanel({ character, messages, isVoiceEnabled, onClose, onSend
       audio.onended = () => {
         URL.revokeObjectURL(audioUrl);
         audioRef.current = null;
-        lastProcessedMessageIdRef.current = messageToProcess.id;
+        const completedMessageId = messageToProcess.id;
+        lastProcessedMessageIdRef.current = completedMessageId;
         isProcessingQueueRef.current = false;
+        
+        // TTS 재생 완료 콜백 호출
+        if (onTTSComplete) {
+          onTTSComplete(completedMessageId);
+        }
+        
         // 다음 메시지 처리
         processTTSQueue();
       };

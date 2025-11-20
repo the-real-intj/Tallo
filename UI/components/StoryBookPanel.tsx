@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { StoryPage, Character } from '@/types';
 import { cn } from '@/lib/utils';
-import { API_BASE_URL, generateQuestion, generateClosingMessage, chatWithLLMAndTTS } from '@/lib/api';
+import { API_BASE_URL } from '@/lib/api';
 
 interface StoryBookPanelProps {
   currentPage: StoryPage | null;
@@ -18,6 +18,7 @@ interface StoryBookPanelProps {
   onNext: () => void;
   onPrevious: () => void;
   onAudioPregenerated?: (audioMap: Record<number, string>) => void;  // 미리 생성 완료 콜백
+  onPageAudioEnded?: (page: number) => void;  // 페이지 오디오 재생 완료 콜백
 }
 
 /**
@@ -38,6 +39,7 @@ export function StoryBookPanel({
   onNext,
   onPrevious,
   onAudioPregenerated,
+  onPageAudioEnded,
 }: StoryBookPanelProps) {
   const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [isPregenerating, setIsPregenerating] = useState(false);
@@ -47,17 +49,7 @@ export function StoryBookPanel({
   const lastReadPageRef = useRef<number>(-1);
   const hasPregeneratedRef = useRef(false);
   
-  // 질문 및 사용자 입력 상태
-  const [questionText, setQuestionText] = useState<string | null>(null);
-  const [questionAudioUrl, setQuestionAudioUrl] = useState<string | null>(null);
-  const [isWaitingForAnswer, setIsWaitingForAnswer] = useState(false);
-  const [userAnswer, setUserAnswer] = useState('');
-  const [isProcessingAnswer, setIsProcessingAnswer] = useState(false);
-  const [conversationCount, setConversationCount] = useState(0); // 대화 횟수 추적 (2마디까지)
-  const [closingMessage, setClosingMessage] = useState<string | null>(null);
-  const [closingAudioUrl, setClosingAudioUrl] = useState<string | null>(null);
-  const questionAudioRef = useRef<HTMLAudioElement | null>(null);
-  const closingAudioRef = useRef<HTMLAudioElement | null>(null);
+  // 질문/답변 UI는 제거됨 (채팅창으로 이동)
 
   // 음성 ON 시 전체 동화 미리 생성 비활성화
   // handleStartStory에서 이미 오디오를 생성하므로 중복 방지
@@ -267,103 +259,16 @@ export function StoryBookPanel({
               blobUrlRef.current = null;
             }
             
-            if (!currentPage || !character) return;
+            if (!currentPage) return;
             
-            // 마지막 페이지인 경우 마무리 멘트 생성
-            if (currentPage.page === totalPages) {
-              console.log(`✅ 마지막 페이지(${currentPage.page}) 재생 완료, 마무리 멘트 생성`);
-              try {
-                // 전체 동화 텍스트 수집
-                const allText = storyPages?.map(p => p.text).join(' ') || currentPage.text;
-                
-                const closingResult = await generateClosingMessage({
-                  story_title: storyTitle || '동화',
-                  story_summary: allText,
-                  character_id: character.voice,
-                  character_name: character.name,
-                });
-                
-                setClosingMessage(closingResult.text);
-                if (closingResult.audio_url) {
-                  const closingAudioUrl = closingResult.audio_url.startsWith('/')
-                    ? `${API_BASE_URL}${closingResult.audio_url}`
-                    : closingResult.audio_url;
-                  setClosingAudioUrl(closingAudioUrl);
-                  
-                  // 마무리 멘트 오디오 재생
-                  const response = await fetch(closingAudioUrl, {
-                    headers: { 'ngrok-skip-browser-warning': 'true' }
-                  });
-                  const blob = await response.blob();
-                  const blobUrl = URL.createObjectURL(blob);
-                  
-                  const closingAudio = new Audio(blobUrl);
-                  closingAudioRef.current = closingAudio;
-                  
-                  closingAudio.onended = () => {
-                    URL.revokeObjectURL(blobUrl);
-                    closingAudioRef.current = null;
-                    setClosingMessage(null);
-                    setClosingAudioUrl(null);
-                  };
-                  
-                  await closingAudio.play();
-                }
-              } catch (error) {
-                console.error('❌ 마무리 멘트 생성 실패:', error);
-              }
-              return;
-            }
-            
-            // 페이지가 2의 배수인 경우 질문 생성
-            if (currentPage.page % 2 === 0 && currentPage.text) {
-              console.log(`❓ 페이지 ${currentPage.page}는 2의 배수, 질문 생성`);
-              // 대화 카운터 초기화 (새 질문 시작)
-              setConversationCount(0);
-              try {
-                const questionResult = await generateQuestion({
-                  page_text: currentPage.text,
-                  character_id: character.voice,
-                  character_name: character.name,
-                  story_title: storyTitle,
-                });
-                
-                setQuestionText(questionResult.text);
-                if (questionResult.audio_url) {
-                  const qAudioUrl = questionResult.audio_url.startsWith('/')
-                    ? `${API_BASE_URL}${questionResult.audio_url}`
-                    : questionResult.audio_url;
-                  setQuestionAudioUrl(qAudioUrl);
-                  
-                  // 질문 오디오 재생
-                  const response = await fetch(qAudioUrl, {
-                    headers: { 'ngrok-skip-browser-warning': 'true' }
-                  });
-                  const blob = await response.blob();
-                  const blobUrl = URL.createObjectURL(blob);
-                  
-                  const questionAudio = new Audio(blobUrl);
-                  questionAudioRef.current = questionAudio;
-                  
-                  questionAudio.onended = () => {
-                    URL.revokeObjectURL(blobUrl);
-                    questionAudioRef.current = null;
-                    setIsWaitingForAnswer(true);
-                  };
-                  
-                  await questionAudio.play();
-                } else {
-                  setIsWaitingForAnswer(true);
-                }
-              } catch (error) {
-                console.error('❌ 질문 생성 실패:', error);
-                // 질문 생성 실패 시 다음 페이지로 이동
+            // 페이지 오디오 재생 완료 콜백 호출 (질문 생성은 page.tsx에서 처리)
+            if (onPageAudioEnded) {
+              onPageAudioEnded(currentPage.page);
+            } else {
+              // 콜백이 없으면 기본 동작: 다음 페이지로 이동
+              if (currentPage.page < totalPages) {
                 onNext();
               }
-            } else {
-              // 2의 배수가 아니면 바로 다음 페이지로 이동
-              console.log(`⏭️ 페이지 ${currentPage.page} 재생 완료, 다음 페이지로 이동`);
-              onNext();
             }
           };
 
@@ -404,14 +309,6 @@ export function StoryBookPanel({
       if (blobUrlRef.current) {
         URL.revokeObjectURL(blobUrlRef.current);
         blobUrlRef.current = null;
-      }
-      if (questionAudioRef.current) {
-        questionAudioRef.current.pause();
-        questionAudioRef.current = null;
-      }
-      if (closingAudioRef.current) {
-        closingAudioRef.current.pause();
-        closingAudioRef.current = null;
       }
     };
   }, [currentPage, isVoiceEnabled, isPlaying, audioMap, storyPages, character, storyTitle, currentPage?.audio_url]);
@@ -514,128 +411,7 @@ export function StoryBookPanel({
             {currentPage.text}
           </div>
 
-          {/* 질문 표시 */}
-          {questionText && (
-            <div className="mb-6 p-4 bg-blue-50 rounded-lg border-2 border-blue-200">
-              <p className="text-sm text-blue-600 font-semibold mb-2">❓ 질문</p>
-              <p className="text-lg text-blue-800">{questionText}</p>
-            </div>
-          )}
-
-          {/* 사용자 답변 입력 */}
-          {isWaitingForAnswer && (
-            <div className="mb-6 p-4 bg-yellow-50 rounded-lg border-2 border-yellow-200">
-              <p className="text-sm text-yellow-700 font-semibold mb-3">
-                💭 {conversationCount === 0 ? '답변을 입력해주세요' : `${conversationCount + 1}번째 대화 - 자유롭게 이야기해주세요`}
-              </p>
-              <textarea
-                value={userAnswer}
-                onChange={(e) => setUserAnswer(e.target.value)}
-                placeholder="답변을 입력하세요..."
-                className="w-full p-3 border border-yellow-300 rounded-lg mb-3 focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                rows={3}
-              />
-              <button
-                onClick={async () => {
-                  if (!userAnswer.trim() || !character) return;
-                  
-                  setIsProcessingAnswer(true);
-                  try {
-                    // 대화 횟수에 따라 다른 프롬프트 사용
-                    const isFirstConversation = conversationCount === 0;
-                    const prompt = isFirstConversation
-                      ? `질문: ${questionText}\n사용자 답변: ${userAnswer}\n\n사용자의 답변에 대해 격려하고 아주 간단히 설명해주세요.`
-                      : `이전 대화 맥락: ${questionText}\n사용자가 말한 내용: ${userAnswer}\n\n사용자의 말에 자연스럽게 대답하고, 동화 내용과 관련된 간단한 이야기를 나눠주세요.`;
-                    
-                    // LLM이 답변에 대한 응답 생성
-                    const response = await chatWithLLMAndTTS({
-                      message: prompt,
-                      character_id: character.voice,
-                      character_name: character.name,
-                      return_audio: true,
-                    });
-                    
-                    // 응답 오디오 재생
-                    if (response.audio_url) {
-                      const responseAudioUrl = response.audio_url.startsWith('/')
-                        ? `${API_BASE_URL}${response.audio_url}`
-                        : response.audio_url;
-                      
-                      const responseFetch = await fetch(responseAudioUrl, {
-                        headers: { 'ngrok-skip-browser-warning': 'true' }
-                      });
-                      const blob = await responseFetch.blob();
-                      const blobUrl = URL.createObjectURL(blob);
-                      
-                      const responseAudio = new Audio(blobUrl);
-                      
-                      responseAudio.onended = () => {
-                        URL.revokeObjectURL(blobUrl);
-                        
-                        // 2마디 대화 완료 여부 확인
-                        const newCount = conversationCount + 1;
-                        setConversationCount(newCount);
-                        
-                        if (newCount >= 2) {
-                          // 2마디 대화 완료 → 다음 페이지로 이동
-                          console.log(`✅ 2마디 대화 완료, 다음 페이지로 이동`);
-                          setQuestionText(null);
-                          setQuestionAudioUrl(null);
-                          setIsWaitingForAnswer(false);
-                          setUserAnswer('');
-                          setIsProcessingAnswer(false);
-                          setConversationCount(0);
-                          onNext();
-                        } else {
-                          // 아직 대화 더 필요 → 사용자 입력 대기
-                          console.log(`💬 ${newCount}/2 대화 완료, 사용자 입력 대기`);
-                          setUserAnswer(''); // 입력 필드 초기화
-                          setIsProcessingAnswer(false);
-                          setIsWaitingForAnswer(true);
-                        }
-                      };
-                      
-                      await responseAudio.play();
-                    } else {
-                      // 오디오가 없으면 대화 카운터만 증가
-                      const newCount = conversationCount + 1;
-                      setConversationCount(newCount);
-                      
-                      if (newCount >= 2) {
-                        // 2마디 대화 완료
-                        setQuestionText(null);
-                        setQuestionAudioUrl(null);
-                        setIsWaitingForAnswer(false);
-                        setUserAnswer('');
-                        setIsProcessingAnswer(false);
-                        setConversationCount(0);
-                        onNext();
-                      } else {
-                        setUserAnswer('');
-                        setIsProcessingAnswer(false);
-                        setIsWaitingForAnswer(true);
-                      }
-                    }
-                  } catch (error) {
-                    console.error('❌ 답변 처리 실패:', error);
-                    setIsProcessingAnswer(false);
-                  }
-                }}
-                disabled={!userAnswer.trim() || isProcessingAnswer}
-                className="w-full px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-              >
-                {isProcessingAnswer ? '처리 중...' : '답변 제출'}
-              </button>
-            </div>
-          )}
-
-          {/* 마무리 멘트 */}
-          {closingMessage && (
-            <div className="mb-6 p-4 bg-green-50 rounded-lg border-2 border-green-200">
-              <p className="text-sm text-green-600 font-semibold mb-2">🎉 마무리</p>
-              <p className="text-lg text-green-800">{closingMessage}</p>
-            </div>
-          )}
+          {/* 질문/답변 UI는 채팅창으로 이동됨 */}
 
           {/* 페이지 진행 표시 */}
           <div className="flex justify-center gap-2 mt-8">

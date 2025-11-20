@@ -9,6 +9,7 @@ export const dummyCharacters: Character[] = [
     id: 1,
     name: '아나',
     emoji: '🎭',
+    imageUrl: '/ana.png', // 이미지 URL 추가
     color: 'from-purple-400 to-pink-400',
     voice: '5fbdc9b344b2', // character_id
     bgColor: 'bg-purple-50',
