@@ -6,6 +6,7 @@ export interface Character {
   id: number;
   name: string;
   emoji: string;
+  imageUrl?: string; // 캐릭터 이미지 URL (투명 배경 PNG)
   color: string; // Tailwind gradient 클래스 (예: 'from-blue-400 to-cyan-400')
   voice: string;
   bgColor: string; // Tailwind bg 클래스 (예: 'bg-blue-50')

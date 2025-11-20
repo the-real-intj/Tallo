@@ -67,16 +67,34 @@ export function CharacterViewer({
           </Suspense>
         </Canvas> */}
 
-        {/* 현재는 큰 이모지로 대체 */}
+        {/* 캐릭터 이미지 또는 이모지 */}
         <div className="relative z-10">
-          <div
-            className={cn(
-              'text-[20rem]',
-              isPlaying ? 'animate-bounce' : 'animate-character-pulse'
-            )}
-          >
-            {character.emoji}
-          </div>
+          {character.imageUrl ? (
+            <div
+              className={cn(
+                'flex items-center justify-center',
+                isPlaying ? 'animate-bounce' : 'animate-character-pulse'
+              )}
+            >
+              <img
+                src={character.imageUrl}
+                alt={character.name}
+                width={320}
+                height={320}
+                className="object-contain"
+                style={{ background: 'transparent' }}
+              />
+            </div>
+          ) : (
+            <div
+              className={cn(
+                'text-[20rem]',
+                isPlaying ? 'animate-bounce' : 'animate-character-pulse'
+              )}
+            >
+              {character.emoji}
+            </div>
+          )}
 
           {/* 말하는 중 표시 */}
           {isPlaying && (

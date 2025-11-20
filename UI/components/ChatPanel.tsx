@@ -130,7 +130,18 @@ export function ChatPanel({ character, messages, isVoiceEnabled, onClose, onSend
       {/* 선택된 캐릭터 정보 */}
       <div className={cn('p-4 border-b-2 border-gray-200', character.bgColor)}>
         <div className="flex items-center gap-3">
-          <div className="text-4xl">{character.emoji}</div>
+          {character.imageUrl ? (
+            <img
+              src={character.imageUrl}
+              alt={character.name}
+              width={48}
+              height={48}
+              className="object-contain"
+              style={{ background: 'transparent' }}
+            />
+          ) : (
+            <div className="text-4xl">{character.emoji}</div>
+          )}
           <div className="flex-1">
             <div className="font-bold text-gray-800">{character.name}</div>
             <div className="text-xs text-gray-600">
@@ -167,7 +178,20 @@ export function ChatPanel({ character, messages, isVoiceEnabled, onClose, onSend
               )}
             >
               {msg.type === 'character' && (
-                <div className="text-2xl mb-1">{character.emoji}</div>
+                character.imageUrl ? (
+                  <div className="mb-1 flex justify-center">
+                    <img
+                      src={character.imageUrl}
+                      alt={character.name}
+                      width={32}
+                      height={32}
+                      className="object-contain"
+                      style={{ background: 'transparent' }}
+                    />
+                  </div>
+                ) : (
+                  <div className="text-2xl mb-1">{character.emoji}</div>
+                )
               )}
               <div className="text-sm text-gray-900">{msg.text}</div>
             </div>
