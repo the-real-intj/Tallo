@@ -265,12 +265,13 @@ def format_datetime_to_string(dt) -> Optional[str]:
 
 def split_story_into_pages(text: str, sentences_per_page: int = 2) -> List[StoryPage]:
     """
-    동화 텍스트를 페이지로 나누기 (1-2문장씩)
-    Repository의 chunk_text와 다르게 문장 단위로 분할 (하위 호환 유지)
+    동화 텍스트를 페이지로 나누기
+    1. "page 1:", "page 2:" 형식이 있으면 그것을 사용
+    2. 없으면 자동으로 1-2문장씩 분할
     
     Args:
         text: 전체 동화 텍스트
-        sentences_per_page: 페이지당 문장 수 (기본값: 2)
+        sentences_per_page: 페이지당 문장 수 (기본값: 2, 자동 분할 시 사용)
         
     Returns:
         List[StoryPage]: 페이지별로 나눈 텍스트 리스트
@@ -278,8 +279,31 @@ def split_story_into_pages(text: str, sentences_per_page: int = 2) -> List[Story
     if not text:
         return []
     
-    # 문장 단위로 나누기 (마침표, 물음표, 느낌표 기준)
     import re
+    
+    # 방법 1: "page 1:", "page 2:" 형식이 있는지 확인
+    page_pattern = r'page\s*(\d+)\s*[:：]\s*(.*?)(?=page\s*\d+\s*[:：]|$)'
+    matches = re.finditer(page_pattern, text, re.IGNORECASE | re.DOTALL)
+    page_matches = list(matches)
+    
+    if page_matches:
+        # 사용자가 직접 페이지를 나눈 경우
+        pages = []
+        for match in page_matches:
+            page_num = int(match.group(1))
+            page_text = match.group(2).strip()
+            if page_text:  # 빈 페이지 제외
+                pages.append(StoryPage(
+                    page=page_num,
+                    text=page_text,
+                    audio_url=None
+                ))
+        
+        if pages:
+            return pages
+    
+    # 방법 2: 자동 분할 (기존 로직)
+    # 문장 단위로 나누기 (마침표, 물음표, 느낌표 기준)
     # 문장 끝 구분자(마침표, 물음표, 느낌표)를 포함하여 분리
     sentences = re.split(r'([.!?。！？]\s*)', text)
     
@@ -389,6 +413,7 @@ def check_mongodb_available():
 
 def storybookdb_to_storyinfo(story_db: "StorybookDB") -> StoryInfo:
     """StorybookDB를 StoryInfo로 변환"""
+    # split_story_into_pages가 "page 1:", "page 2:" 형식을 자동으로 인식하거나 자동 분할
     pages = split_story_into_pages(story_db.content)
     title = story_db.filename.replace(".txt", "") if story_db.filename else "제목 없음"
     
