@@ -1,10 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
 .venv
+ENV/
+*.egg-info/
+dist/
+build/
+
+# 가상환경
+Zonos/
+Zonos/zonos_env/
+*.env
 .env
+.env.local
+
+# IDE
+.vscode/
 .vscode
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 로그
+*.log
+
+# Data
 data
 .conda
-Zonos
+
+# Next.js
 UI/.next
 UI/node_modules
+
+# Notebooks
 voice_train.ipynb
+
+# Docs
 API_SERVER_ANALYSIS.md
