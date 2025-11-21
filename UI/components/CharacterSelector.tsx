@@ -35,24 +35,12 @@ export function CharacterSelector({ onSelect }: CharacterSelectorProps) {
   console.log('[CharacterSelector] error:', error);
   console.log('[CharacterSelector] apiCharacters:', apiCharacters);
 
-  // 캐릭터 이름에 따른 이미지 URL 매핑
-  const getCharacterImageUrl = (name: string): string | undefined => {
-    const imageMap: Record<string, string> = {
-      '아나': '/ana.png',
-      '하츄핑': '/sijinping.png',
-      '베레사': '/varesa.png', // 백엔드에서는 "베레사"로 저장됨
-      '바레사': '/varesa.png', // 혹시 다른 이름으로도 매핑
-    };
-    return imageMap[name];
-  };
-
   // API 데이터를 UI Character 타입으로 변환
   const characters: Character[] = apiCharacters && Array.isArray(apiCharacters)
     ? apiCharacters.map((apiChar) => ({
         id: parseInt(apiChar.id) || 0,
         name: apiChar.name,
         emoji: '🎭', // TODO: API에서 emoji 정보 추가 필요
-        imageUrl: getCharacterImageUrl(apiChar.name), // 이미지 URL 추가
         color: 'from-purple-400 to-pink-400', // TODO: API에서 color 정보 추가 필요
         voice: apiChar.id, // TTS API에서 사용할 character_id
         bgColor: 'bg-purple-50', // TODO: API에서 bgColor 정보 추가 필요

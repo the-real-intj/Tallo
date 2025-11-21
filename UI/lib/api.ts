@@ -6,7 +6,7 @@ import { CharacterResponse, StoryResponse } from '@/types';
  * TODO: 환경 변수로 관리 (.env.local)
  * NEXT_PUBLIC_API_URL=http://localhost:8000
  */
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -36,22 +36,24 @@ export async function fetchCharacters(): Promise<CharacterResponse[]> {
 }
 
 /**
- * 새 캐릭터 생성 (오디오 파일 업로드)
- * POST /characters/create
+ * 새 캐릭터 생성 (유튜브 또는 파일 업로드)
+ * TODO: 백엔드 FastAPI 엔드포인트 연동
+ * POST /api/characters
  */
 export async function createCharacter(data: {
   name: string;
-  description?: string;
-  language?: string;
-  referenceAudio: File;
+  sourceType: 'youtube' | 'upload';
+  sourceUrl?: string;
+  files?: File[];
 }): Promise<CharacterResponse> {
   const formData = new FormData();
   formData.append('name', data.name);
-  formData.append('reference_audio', data.referenceAudio);
-  if (data.description) formData.append('description', data.description);
-  formData.append('language', data.language || 'ko');
-  
-  const response = await apiClient.post('/characters/create', formData, {
+  formData.append('sourceType', data.sourceType);
+  if (data.sourceUrl) formData.append('sourceUrl', data.sourceUrl);
+  if (data.files) {
+    data.files.forEach(file => formData.append('files', file));
+  }
+  const response = await apiClient.post('/api/characters', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   });
   return response.data;
@@ -133,91 +135,17 @@ export async function getStoryById(storyId: string): Promise<StoryInfo> {
 }
 
 /**
- * 로컬 파일 존재 여부 확인 (HEAD 요청)
+ * 동화 오디오 재생
+ * GET /stories/{story_id}/audio
  */
-async function checkLocalFileExists(url: string): Promise<boolean> {
+export async function getStoryAudio(storyId: string): Promise<Blob> {
   try {
-    const response = await fetch(url, {
-      method: 'HEAD',
-      headers: {
-        'ngrok-skip-browser-warning': 'true',
-      },
+    const response = await apiClient.get(`/stories/${storyId}/audio`, {
+      responseType: 'blob'
     });
-    return response.ok;
-  } catch (error) {
-    return false;
-  }
-}
-
-/**
- * 로컬 오디오 파일 확인 (Next.js 정적 파일 경로)
- */
-export async function checkLocalAudioFiles(
-  storyId: string,
-  characterId: string,
-  totalPages: number
-): Promise<{
-  existing_audio: Array<{ page: number; audio_url: string }>;
-  missing_pages: number[];
-}> {
-  const existing_audio: Array<{ page: number; audio_url: string }> = [];
-  const missing_pages: number[] = [];
-
-  // 로컬 파일 경로 (Next.js 정적 파일)
-  const localBaseUrl = '/outputs/cache';
-
-  // 각 페이지 확인
-  for (let page = 1; page <= totalPages; page++) {
-    const localUrl = `${localBaseUrl}/${storyId}/${characterId}/page_${page}.wav`;
-    
-    // 로컬 파일 존재 여부 확인
-    const exists = await checkLocalFileExists(localUrl);
-    
-    if (exists) {
-      existing_audio.push({
-        page,
-        audio_url: localUrl, // 로컬 경로 (상대 경로)
-      });
-    } else {
-      missing_pages.push(page);
-    }
-  }
-
-  return {
-    existing_audio,
-    missing_pages,
-  };
-}
-
-/**
- * 동화 오디오 파일 확인 (Colab 서버)
- * GET /stories/{story_id}/check-audio
- */
-export async function checkStoryAudioFiles(
-  storyId: string,
-  characterId: string
-): Promise<{
-  story_id: string;
-  character_id: string;
-  total_pages: number;
-  existing_audio_count: number;
-  existing_audio: Array<{
-    page: number;
-    text: string;
-    audio_url: string;
-  }>;
-  all_audio_exists: boolean;
-}> {
-  try {
-    const response = await apiClient.get(
-      `/stories/${storyId}/check-audio`,
-      {
-        params: { character_id: characterId }
-      }
-    );
     return response.data;
   } catch (error) {
-    console.error('[API] checkStoryAudioFiles 에러:', error);
+    console.error('[API] getStoryAudio 에러:', error);
     throw error;
   }
 }
@@ -312,87 +240,6 @@ export async function chatWithLLMAndTTS(request: LLMChatRequest): Promise<LLMCha
 }
 
 /**
- * 질문 생성
- * POST /llm/generate-question
- */
-export interface GenerateQuestionRequest {
-  page_text: string;
-  full_story_text?: string;  // 전체 동화책 텍스트 (모든 페이지 텍스트 합친 것)
-  characters?: string[];  // 등장인물 목록
-  character_id: string;
-  character_name?: string;
-  story_title?: string;
-}
-
-export async function generateQuestion(request: GenerateQuestionRequest): Promise<LLMChatResponse> {
-  try {
-    const formData = new FormData();
-    formData.append('page_text', request.page_text);
-    formData.append('character_id', request.character_id);
-    if (request.character_name) {
-      formData.append('character_name', request.character_name);
-    }
-    if (request.story_title) {
-      formData.append('story_title', request.story_title);
-    }
-    // 전체 동화책 텍스트 전달
-    if (request.full_story_text) {
-      formData.append('full_story_text', request.full_story_text);
-    }
-    // 등장인물 정보 전달
-    if (request.characters && request.characters.length > 0) {
-      formData.append('characters', JSON.stringify(request.characters));
-    }
-    // 프롬프트 수정 지시 추가
-    const prompt_instruction = `동화의 등장인물을 기반으로 질문하되, 질문하는 캐릭터는 ${request.character_name || '캐릭터'}입니다.`;
-    formData.append('prompt_instruction', prompt_instruction);
-    
-    const response = await apiClient.post('/llm/generate-question', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-    return response.data;
-  } catch (error) {
-    console.error('[API] generateQuestion 에러:', error);
-    throw error;
-  }
-}
-
-/**
- * 마무리 멘트 생성
- * POST /llm/generate-closing
- */
-export interface GenerateClosingRequest {
-  story_title: string;
-  story_summary: string;
-  character_id: string;
-  character_name?: string;
-}
-
-export async function generateClosingMessage(request: GenerateClosingRequest): Promise<LLMChatResponse> {
-  try {
-    const formData = new FormData();
-    formData.append('story_title', request.story_title);
-    formData.append('story_summary', request.story_summary);
-    formData.append('character_id', request.character_id);
-    if (request.character_name) {
-      formData.append('character_name', request.character_name);
-    }
-    
-    const response = await apiClient.post('/llm/generate-closing', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-    return response.data;
-  } catch (error) {
-    console.error('[API] generateClosingMessage 에러:', error);
-    throw error;
-  }
-}
-
-/**
  * ==========================================
  * TTS API
  * ==========================================
@@ -404,14 +251,11 @@ export async function generateClosingMessage(request: GenerateClosingRequest): P
  */
 export interface TTSRequest {
   text: string;
-  character_id?: string; // 선택적 (speaker_wav 사용 시)
+  character_id: string;
   language?: string;
   speaking_rate?: number;
   pitch?: number;
   emotion?: string;
-  auto_emotion?: boolean; // 자동 감정 인식
-  as_file?: boolean; // 파일로 반환 여부
-  speaker_wav?: string; // 스피커 WAV 파일 경로 (character_id 대신 사용 가능)
 }
 
 export async function synthesizeTTS(request: TTSRequest): Promise<Blob> {
@@ -532,15 +376,32 @@ export interface PreGenerateResponse {
  */
 export async function pregenerateStoryAudio(
   characterId: string,
-  pages: Array<{ page: number; text: string }>,
-  storyId?: string
+  pages: Array<{ page: number; text: string }>
 ): Promise<PreGenerateResponse> {
   const response = await apiClient.post('/stories/pregenerate', {
     character_id: characterId,
-    story_id: storyId || null,
     pages: pages
   });
   return response.data;
+}
+
+/**
+ * 캐릭터의 동화책 오디오 맵 조회
+ * GET /stories/audio/:characterId
+ */
+export async function getStoryAudioMap(characterId: string): Promise<{
+  character_id: string;
+  pages: Record<number, string>;
+}> {
+  const response = await apiClient.get(`/stories/audio/${characterId}`);
+  return response.data;
+}
+
+/**
+ * 캐시된 오디오 파일 URL 생성
+ */
+export function getCachedAudioUrl(characterId: string, pageNum: number): string {
+  return `${API_BASE_URL}/cache/${characterId}/page_${pageNum}.wav`;
 }
 
 export default apiClient;

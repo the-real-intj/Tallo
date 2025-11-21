@@ -26,20 +26,7 @@ export function CharacterCard({ character, isSelected, onClick }: CharacterCardP
         character.bgColor
       )}
     >
-      {character.imageUrl ? (
-        <div className="mb-2 flex items-center justify-center">
-          <img
-            src={character.imageUrl}
-            alt={character.name}
-            width={80}
-            height={80}
-            className="object-contain"
-            style={{ background: 'transparent' }}
-          />
-        </div>
-      ) : (
-        <div className="text-5xl mb-2">{character.emoji}</div>
-      )}
+      <div className="text-5xl mb-2">{character.emoji}</div>
       <div className="font-bold text-gray-800">{character.name}</div>
       <div className="text-xs text-gray-600 mt-1">{character.voice}</div>
     </div>
