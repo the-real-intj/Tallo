@@ -247,11 +247,14 @@ export default function HomePage() {
 
 
   // 다음 페이지
-  const handleNextPage = async () => {
+  const handleNextPage = async (fromPage?: number) => {
     if (!selectedStory || !selectedStory.pages) return;
     
-    if (currentPage < selectedStory.pages.length) {
-      const nextPage = currentPage + 1;
+    // fromPage가 제공되면 사용, 없으면 currentPage 사용
+    const basePage = fromPage !== undefined ? fromPage : currentPage;
+    
+    if (basePage < selectedStory.pages.length) {
+      const nextPage = basePage + 1;
       setCurrentPage(nextPage);  // 1. 페이지 상태 업데이트
       
       // 2. 오디오 재생
@@ -521,11 +524,11 @@ export default function HomePage() {
               return;
             }
             
-            // 페이지가 2의 배수인 경우 질문 생성
+            // 페이지가 2의 배수인 경우 질문 생성 (페이지 전환은 TTS 완료 시점에 처리)
             if (page % 2 === 0 && selectedStory.pages) {
               const pageData = selectedStory.pages.find(p => p.page === page);
               if (pageData?.text) {
-                console.log(`❓ 페이지 ${page}는 2의 배수, 질문 생성`);
+                console.log(`❓ 페이지 ${page}는 2의 배수, 질문 생성 (페이지 전환은 TTS 완료 후)`);
                 // 대화 카운터 초기화 (새 질문 시작)
                 conversationCountRef.current[page] = 0;
                 
@@ -553,21 +556,25 @@ export default function HomePage() {
                   addMessage('character', questionResult.text);
                   currentQuestionRef.current[page] = questionResult.text;
                   
-                  // TTS 재생 중이므로 페이지 오디오는 대기 (TTS 완료 후 자동으로 다음 페이지 재생)
+                  // TTS 재생 중이므로 페이지 오디오는 대기 (TTS 완료 후 onTTSComplete에서 페이지 전환)
                   isPlayingAudioRef.current = true;
+                  // 짝수 페이지는 여기서 페이지 전환하지 않음 (TTS 완료 시점에 onTTSComplete에서 처리)
+                  return;
                 } catch (error) {
                   console.error('❌ 질문 생성 실패:', error);
-                  // 질문 생성 실패 시 다음 페이지로 이동
-                  handleNextPage();
+                  // 질문 생성 실패 시에만 다음 페이지로 이동
+                  // 파라미터로 받은 page를 사용하여 정확한 다음 페이지 계산
+                  handleNextPage(page);
+                  return;
                 }
               }
             } else {
               // 2의 배수가 아니면 바로 다음 페이지로 이동
+              // 파라미터로 받은 page를 사용하여 정확한 다음 페이지 계산
               console.log(`⏭️ 페이지 ${page} 재생 완료, 다음 페이지로 이동`);
-              const nextPage = page + 1;
-              if (nextPage <= (selectedStory.pages?.length || 1)) {
-                // handleNextPage()가 페이지 상태 변경 + 오디오 재생 둘 다 처리
-                handleNextPage();
+              if (page < (selectedStory.pages?.length || 1)) {
+                // handleNextPage()에 현재 페이지 번호를 전달하여 상태 업데이트 지연 문제 해결
+                handleNextPage(page);
               }
             }
           }}
