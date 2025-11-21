@@ -16,11 +16,6 @@ Zonos/zonos_env/
 *.env
 .env.local
 
-# 출력 파일
-outputs/
-*.wav
-*.mp3
-
 # IDE
 .vscode/
 .idea/
