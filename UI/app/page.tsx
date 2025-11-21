@@ -24,6 +24,7 @@ export default function HomePage() {
     isPlaying,
     currentEmotion,
     isVoiceEnabled,
+    isStoryCompleted,
     setSelectedCharacter,
     setSelectedStory,
     setCurrentPage,
@@ -32,6 +33,7 @@ export default function HomePage() {
     setIsPlaying,
     setCurrentEmotion,
     setIsVoiceEnabled,
+    setIsStoryCompleted,
   } = useAppStore();
   
   // 2마디 대화 카운터 (페이지별로 관리)
@@ -39,6 +41,7 @@ export default function HomePage() {
   const currentQuestionRef = useRef<Record<number, string>>({});
   const startMessageIdRef = useRef<number | null>(null); // 시작 메시지 ID 추적
   const closingMessageIdRef = useRef<number | null>(null); // 마무리 메시지 ID 추적 (2번째 대화 완료 후)
+  const finalClosingMessageIdRef = useRef<number | null>(null); // 마지막 페이지 마무리 멘트 ID 추적
   
   // 중앙 오디오 재생 제어
   const isPlayingAudioRef = useRef<boolean>(false); // 현재 오디오 재생 중인지
@@ -62,6 +65,33 @@ export default function HomePage() {
     clearMessages();
     setCurrentPage(1);
     setIsPlaying(false);
+    setIsStoryCompleted(false);
+  };
+
+  // 나가기 핸들러 (스토리 완료 후 초기화)
+  const handleExit = () => {
+    // 오디오 정지
+    if ((window as any).stopStoryAudio) {
+      (window as any).stopStoryAudio();
+    }
+    
+    // 상태 초기화
+    setSelectedStory(null);
+    setSelectedCharacter(null);
+    clearMessages();
+    setCurrentPage(1);
+    setIsPlaying(false);
+    setIsStoryCompleted(false);
+    setCurrentEmotion('neutral');
+    
+    // ref 초기화
+    conversationCountRef.current = {};
+    currentQuestionRef.current = {};
+    startMessageIdRef.current = null;
+    closingMessageIdRef.current = null;
+    finalClosingMessageIdRef.current = null;
+    isPlayingAudioRef.current = false;
+    pendingPageAudioRef.current = null;
   };
 
   // 스토리 선택 핸들러
@@ -324,6 +354,14 @@ export default function HomePage() {
                 setSelectedStory(null);
               }}
               onTTSComplete={(messageId) => {
+                // 마지막 페이지 마무리 멘트 TTS 완료 → 스토리 완료 처리
+                if (finalClosingMessageIdRef.current === messageId) {
+                  console.log('✅ 마지막 페이지 마무리 멘트 TTS 완료, 스토리 완료');
+                  setIsStoryCompleted(true);
+                  finalClosingMessageIdRef.current = null; // 초기화
+                  return;
+                }
+                
                 // 마무리 메시지(2번째 대화 완료) TTS 완료 → 다음 페이지로 이동
                 if (closingMessageIdRef.current === messageId) {
                   console.log('✅ 마무리 메시지 TTS 완료, 다음 페이지로 이동');
@@ -441,7 +479,14 @@ export default function HomePage() {
 
         {/* 하단 컨트롤 */}
         <div className="p-4 border-t-2 border-gray-200 bg-gray-50">
-          {!isPlaying ? (
+          {isStoryCompleted ? (
+            <button
+              onClick={handleExit}
+              className="w-full py-3 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl font-bold hover:shadow-lg transition-all hover:from-green-600 hover:to-emerald-600"
+            >
+              ✨ 완료! 나가기
+            </button>
+          ) : !isPlaying ? (
             <button
               onClick={handleStartStory}
               disabled={!selectedCharacter || !selectedStory}
@@ -527,7 +572,8 @@ export default function HomePage() {
                 });
                 
                 // 마무리 멘트를 채팅창에 메시지로 추가 (TTS 자동 재생)
-                addMessage('character', closingResult.text);
+                const messageId = addMessage('character', closingResult.text);
+                finalClosingMessageIdRef.current = messageId;
               } catch (error) {
                 console.error('❌ 마무리 멘트 생성 실패:', error);
               }

@@ -88,6 +88,7 @@ export interface AppState {
   isPlaying: boolean;
   currentEmotion: Emotion;
   isVoiceEnabled: boolean;
+  isStoryCompleted: boolean;
 
   // Actions
   setSelectedCharacter: (character: Character | null) => void;
@@ -98,6 +99,7 @@ export interface AppState {
   setIsPlaying: (playing: boolean) => void;
   setCurrentEmotion: (emotion: Emotion) => void;
   setIsVoiceEnabled: (enabled: boolean) => void;
+  setIsStoryCompleted: (completed: boolean) => void;
 }
 
 /**

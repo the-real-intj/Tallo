@@ -15,6 +15,7 @@ export const useAppStore = create<AppState>((set) => ({
   isPlaying: false,
   currentEmotion: 'neutral',
   isVoiceEnabled: true,  // 기본값을 true로 변경 (동화 시작 시 음성 자동 활성화)
+  isStoryCompleted: false,
 
   setSelectedCharacter: (character) =>
     set({ selectedCharacter: character }),
@@ -60,4 +61,7 @@ export const useAppStore = create<AppState>((set) => ({
 
   setIsVoiceEnabled: (enabled) =>
     set({ isVoiceEnabled: enabled }),
+
+  setIsStoryCompleted: (completed) =>
+    set({ isStoryCompleted: completed }),
 }));
