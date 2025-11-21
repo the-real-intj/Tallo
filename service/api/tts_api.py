@@ -183,6 +183,7 @@ class LLMChatRequest(BaseModel):
     character_name: Optional[str] = Field(None, description="캐릭터 이름 (프롬프트에 사용)")
     system_prompt: Optional[str] = Field(None, description="시스템 프롬프트 (선택)")
     return_audio: bool = Field(True, description="TTS 오디오도 함께 반환할지 여부")
+    current_page_text: Optional[str] = Field(None, description="현재 동화책 페이지 내용 (선택)")
 
 class LLMChatResponse(BaseModel):
     """LLM 채팅 응답"""
@@ -942,7 +943,8 @@ async def chat_with_llm(request: LLMChatRequest):
             character_name=request.character_name,
             system_prompt=request.system_prompt,
             return_audio=request.return_audio,
-            tts_callback=tts_callback if request.return_audio and request.character_id else None
+            tts_callback=tts_callback if request.return_audio and request.character_id else None,
+            current_page_text=request.current_page_text
         )
         
         return LLMChatResponse(text=result["text"], audio_url=result.get("audio_url"))
@@ -958,7 +960,9 @@ async def generate_question(
     page_text: str = Form(...),
     character_id: str = Form(...),
     character_name: Optional[str] = Form(None),
-    story_title: Optional[str] = Form(None)
+    story_title: Optional[str] = Form(None),
+    page: Optional[str] = Form(None),  # 페이지 숫자 (string으로 전달)
+    full_story_text: Optional[str] = Form(None)  # 1페이지부터 해당 페이지까지의 텍스트 (선택)
 ):
     """
     페이지 텍스트를 기반으로 질문 생성
@@ -987,7 +991,9 @@ async def generate_question(
             character_id=character_id,
             character_name=character_name,
             story_title=story_title,
-            tts_callback=tts_callback
+            tts_callback=tts_callback,
+            full_story_text=full_story_text,
+            page=page  # 페이지 숫자 (string)
         )
         
         return LLMChatResponse(text=result["text"], audio_url=result.get("audio_url"))

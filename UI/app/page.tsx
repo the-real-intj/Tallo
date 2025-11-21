@@ -373,11 +373,16 @@ export default function HomePage() {
                   }
                   
                   try {
+                    // 현재 페이지 텍스트 가져오기
+                    const currentPageData = selectedStory?.pages?.find(p => p.page === currentPageNum);
+                    const currentPageText = currentPageData?.text || '';
+                    
                     const response = await chatWithLLMAndTTS({
                       message: prompt,
                       character_id: selectedCharacter.voice,
                       character_name: selectedCharacter.name,
                       return_audio: true,
+                      current_page_text: currentPageText,
                     });
                     
                     // LLM 응답 메시지 추가
@@ -407,11 +412,16 @@ export default function HomePage() {
                 } else {
                   // 일반 채팅 (질문 페이지가 아닌 경우)
                   try {
+                    // 현재 페이지 텍스트 가져오기
+                    const currentPageData = selectedStory?.pages?.find(p => p.page === currentPageNum);
+                    const currentPageText = currentPageData?.text || '';
+                    
                     const response = await chatWithLLMAndTTS({
                       message: text,
                       character_id: selectedCharacter.voice,
                       character_name: selectedCharacter.name,
                       return_audio: true,
+                      current_page_text: currentPageText,
                     });
                     
                     // LLM 응답 메시지 추가
@@ -533,8 +543,9 @@ export default function HomePage() {
                 conversationCountRef.current[page] = 0;
                 
                 try {
-                  // 전체 동화책 텍스트 합치기
-                  const fullStoryText = selectedStory.pages
+                  // 1페이지부터 현재 페이지까지의 텍스트 합치기
+                  const storyTextUpToPage = selectedStory.pages
+                    .filter(p => p.page <= page)
                     .map(p => p.text)
                     .join(' ')
                     .trim();
@@ -545,7 +556,8 @@ export default function HomePage() {
                   
                   const questionResult = await generateQuestion({
                     page_text: pageData.text,
-                    full_story_text: fullStoryText,
+                    page: page.toString(),  // 페이지 숫자를 string으로 전달
+                    full_story_text: storyTextUpToPage,  // 1페이지부터 현재 페이지까지의 텍스트
                     characters: characters,
                     character_id: selectedCharacter.voice,
                     character_name: selectedCharacter.name,

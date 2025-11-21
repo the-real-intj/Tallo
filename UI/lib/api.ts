@@ -274,6 +274,7 @@ export interface LLMChatRequest {
   character_name?: string;
   system_prompt?: string;
   return_audio?: boolean;
+  current_page_text?: string;  // 현재 동화책 페이지 내용 (선택)
 }
 
 export interface LLMChatResponse {
@@ -317,7 +318,8 @@ export async function chatWithLLMAndTTS(request: LLMChatRequest): Promise<LLMCha
  */
 export interface GenerateQuestionRequest {
   page_text: string;
-  full_story_text?: string;  // 전체 동화책 텍스트 (모든 페이지 텍스트 합친 것)
+  page?: string;  // 페이지 숫자 (string으로 전달, 해당 페이지까지의 이야기 참조)
+  full_story_text?: string;  // 1페이지부터 해당 페이지까지의 텍스트 (모든 페이지 텍스트 합친 것)
   characters?: string[];  // 등장인물 목록
   character_id: string;
   character_name?: string;
@@ -335,7 +337,11 @@ export async function generateQuestion(request: GenerateQuestionRequest): Promis
     if (request.story_title) {
       formData.append('story_title', request.story_title);
     }
-    // 전체 동화책 텍스트 전달
+    // 페이지 숫자 전달 (string으로)
+    if (request.page) {
+      formData.append('page', request.page);
+    }
+    // 1페이지부터 해당 페이지까지의 텍스트 전달
     if (request.full_story_text) {
       formData.append('full_story_text', request.full_story_text);
     }
