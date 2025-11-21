@@ -378,15 +378,24 @@ async def list_characters():
             characters_collection = mongodb_db["characters"]
             characters_cursor = characters_collection.find()
 
+            # 하드코딩된 reference_audio 경로
+            audio_paths = {
+                "5fbdc9b344b2": "audio/ana.wav",
+                "4c84ef36f400": "audio/[캐치티니핑]하츄핑.wav",
+                "3bdddc4091e2": "audio/varesa.wav"
+            }
+
             characters_list = []
             for char_doc in characters_cursor:
+                character_id = char_doc.get("character_id", str(char_doc["_id"]))
+                
                 characters_list.append(CharacterInfo(
-                    id=char_doc.get("character_id", str(char_doc["_id"])),
+                    id=character_id,
                     name=char_doc.get("name", ""),
                     description=char_doc.get("description"),
                     language=char_doc.get("language", "ko"),
                     created_at=format_datetime_to_string(char_doc.get("created_at")),
-                    reference_audio=char_doc.get("reference_audio")
+                    reference_audio=audio_paths.get(character_id, "audio/default.wav")
                 ))
 
             if characters_list:
